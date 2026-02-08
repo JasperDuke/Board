@@ -1,42 +1,36 @@
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
+import { verifyAuthToken } from "@/lib/auth";
+import { getMyProjects } from "@/lib/services/myProjects";
 
 import CreateProjectTrigger from "./CreateProjectTrigger";
-import { MyProjectsTable, type ProjectSummary } from "./MyProjectsTable";
-
-async function fetchMyProjects(): Promise<ProjectSummary[]> {
-  const headerList = await headers();
-  const cookieStore = await cookies();
-
-  const protocol = headerList.get("x-forwarded-proto") ?? "http";
-  const host = headerList.get("host") ?? "localhost:3000";
-  const cookieHeader = cookieStore
-    .getAll()
-    .map(({ name, value }) => `${name}=${value}`)
-    .join("; ");
-
-  const response = await fetch(`${protocol}://${host}/api/my-projects`, {
-    headers: {
-      Cookie: cookieHeader,
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    return [];
-  }
-
-  return response.json();
-}
+import { MyProjectsTable } from "./MyProjectsTable";
 
 export default async function MyProjectsPage() {
-  const projects = await fetchMyProjects();
+  const cookieStore = await cookies();
+  const token = cookieStore.get("auth_token")?.value;
+
+  if (!token) {
+    redirect("/login");
+  }
+
+  const payload = verifyAuthToken(token);
+
+  if (!payload?.userId) {
+    redirect("/login");
+  }
+
+  const projects = await getMyProjects(payload.userId);
 
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto flex max-w-6xl flex-col gap-8">
         <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
-            <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-50">My Projects</h1>
+            <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-50">
+              My Projects
+            </h1>
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Your active projects and recent activity
             </p>
@@ -44,7 +38,10 @@ export default async function MyProjectsPage() {
           <CreateProjectTrigger />
         </header>
 
-        <MyProjectsTable projects={projects} createAction={<CreateProjectTrigger />} />
+        <MyProjectsTable
+          projects={projects}
+          createAction={<CreateProjectTrigger />}
+        />
       </div>
     </main>
   );

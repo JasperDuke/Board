@@ -6,9 +6,9 @@ import {
   ProjectMemberRole,
   UserRole,
   WorkspaceMemberRole,
-} from "../src/lib/prismaEnums";
+} from "../src/lib/prismaEnums.js";
 
-import prisma from "../src/lib/db";
+import prisma from "../src/lib/db.js";
 
 // Ensure JWT_SECRET is available for the hashPassword helper.
 if (!process.env.JWT_SECRET) {
@@ -32,7 +32,7 @@ async function main() {
     return;
   }
 
-  const { hashPassword } = await import("../src/lib/auth");
+  const { hashPassword } = await import("../src/lib/auth.js");
 
   const passwordHash = await hashPassword(ADMIN_PASSWORD);
 
