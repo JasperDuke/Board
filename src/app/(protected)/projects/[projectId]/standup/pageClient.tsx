@@ -123,8 +123,8 @@ const getMissingStandupSections = (entry?: StandupEntry | StandupEntryWithUser |
     return {
       progress: true,
       today: true,
-      blockers: true,
-      dependencies: true,
+      blockers: false,
+      dependencies: false,
       linkedWork: true,
     };
   }
@@ -132,8 +132,8 @@ const getMissingStandupSections = (entry?: StandupEntry | StandupEntryWithUser |
   return {
     progress: !entry.progressSinceYesterday?.trim(),
     today: !entry.summaryToday?.trim(),
-    blockers: !entry.blockers?.trim(),
-    dependencies: !entry.dependencies?.trim(),
+    blockers: false,
+    dependencies: false,
     linkedWork: entry.issues.length + entry.research.length === 0,
   };
 };
@@ -143,7 +143,10 @@ const getStandupEntryStatus = (
 ): StandupEntryStatus => {
   if (!entry) return "missing";
   const missingSections = getMissingStandupSections(entry);
-  const hasMissing = Object.values(missingSections).some(Boolean);
+  const hasMissing =
+    missingSections.progress ||
+    missingSections.today ||
+    missingSections.linkedWork;
   return hasMissing ? "partial" : "updated";
 };
 
@@ -358,6 +361,32 @@ const getStandupSummaryForProjectAndDate = async (
   return (await response.json()) as StandupSummaryResponse;
 };
 
+const getStandupSequence = async (projectId: string) => {
+  const response = await fetch(`/api/projects/${projectId}/standup/sequence`);
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.message ?? "Unable to load standup sequence");
+  }
+
+  return (await response.json()) as { sequenceUserIds: string[] };
+};
+
+const saveStandupSequence = async (projectId: string, sequenceUserIds: string[]) => {
+  const response = await fetch(`/api/projects/${projectId}/standup/sequence`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sequenceUserIds }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.message ?? "Unable to save standup sequence");
+  }
+
+  return (await response.json()) as { sequenceUserIds: string[] };
+};
+
 type StandupPageClientProps = {
   projectId: string;
   projectRole: ProjectRole | null;
@@ -401,8 +430,14 @@ export default function StandupPageClient({
   const [editingNoteText, setEditingNoteText] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [queueSortMode, setQueueSortMode] = useState<
-    "suggested" | "alphabetical"
+    "suggested" | "alphabetical" | "custom"
   >("suggested");
+  const [savedSequenceUserIds, setSavedSequenceUserIds] = useState<string[]>([]);
+  const [customSequenceUserIds, setCustomSequenceUserIds] = useState<string[]>([]);
+  const [draggedSequenceUserId, setDraggedSequenceUserId] = useState<string | null>(null);
+  const [dragOverSequenceUserId, setDragOverSequenceUserId] = useState<string | null>(null);
+  const [isSavingSequence, setIsSavingSequence] = useState(false);
+  const [sequenceError, setSequenceError] = useState("");
   const [queueIndex, setQueueIndex] = useState(0);
   const [standupQueueEntries, setStandupQueueEntries] = useState<
     StandupEntryWithUser[]
@@ -501,7 +536,19 @@ export default function StandupPageClient({
       };
     });
 
+    const customIndexByUserId = new Map(
+      customSequenceUserIds.map((userId, index) => [userId, index])
+    );
+
     entries.sort((a, b) => {
+      if (queueSortMode === "custom") {
+        const aIndex = customIndexByUserId.get(a.member.user.id);
+        const bIndex = customIndexByUserId.get(b.member.user.id);
+        const aOrder = aIndex ?? Number.MAX_SAFE_INTEGER;
+        const bOrder = bIndex ?? Number.MAX_SAFE_INTEGER;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+      }
+
       if (queueSortMode === "alphabetical") {
         const nameComparison = a.normalizedName.localeCompare(b.normalizedName);
         if (nameComparison !== 0) return nameComparison;
@@ -518,7 +565,13 @@ export default function StandupPageClient({
     });
 
     return entries.map((entry) => entry.member);
-  }, [members, queueSortMode, queueStatusByUserId]);
+  }, [customSequenceUserIds, members, queueSortMode, queueStatusByUserId]);
+  const isSequenceDirty = useMemo(() => {
+    if (customSequenceUserIds.length !== savedSequenceUserIds.length) return true;
+    return customSequenceUserIds.some(
+      (userId, index) => userId !== savedSequenceUserIds[index]
+    );
+  }, [customSequenceUserIds, savedSequenceUserIds]);
   const selectedMember = useMemo(
     () => orderedQueue.find((member) => member.user.id === selectedUserId),
     [orderedQueue, selectedUserId]
@@ -624,6 +677,43 @@ export default function StandupPageClient({
 
     loadMembers();
   }, [canViewStandupView, projectId]);
+
+  useEffect(() => {
+    if (!projectId || !canViewStandupView) return;
+
+    let isCancelled = false;
+
+    getStandupSequence(projectId)
+      .then((data) => {
+        if (isCancelled) return;
+        setSavedSequenceUserIds(data.sequenceUserIds);
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setSequenceError(
+          error instanceof Error ? error.message : "Unable to load standup sequence"
+        );
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [canViewStandupView, projectId]);
+
+  useEffect(() => {
+    if (!members.length) {
+      setCustomSequenceUserIds([]);
+      return;
+    }
+
+    const memberIds = new Set(members.map((member) => member.user.id));
+    const normalizedSaved = savedSequenceUserIds.filter((userId) => memberIds.has(userId));
+    const missingIds = members
+      .map((member) => member.user.id)
+      .filter((userId) => !normalizedSaved.includes(userId));
+
+    setCustomSequenceUserIds([...normalizedSaved, ...missingIds]);
+  }, [members, savedSequenceUserIds]);
 
   useEffect(() => {
     if (!canProxyStandup) {
@@ -1126,6 +1216,59 @@ export default function StandupPageClient({
     [orderedQueue, scrollStandupViewToTop, selectedUserId]
   );
 
+
+  const moveCustomSequence = useCallback(
+    (direction: -1 | 1) => {
+      if (!selectedUserId) return;
+
+      setCustomSequenceUserIds((current) => {
+        const index = current.findIndex((userId) => userId === selectedUserId);
+        if (index < 0) return current;
+
+        const nextIndex = index + direction;
+        if (nextIndex < 0 || nextIndex >= current.length) return current;
+
+        const next = [...current];
+        [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+        return next;
+      });
+    },
+    [selectedUserId]
+  );
+
+  const moveCustomSequenceUser = useCallback((sourceUserId: string, targetUserId: string) => {
+    if (sourceUserId === targetUserId) return;
+
+    setCustomSequenceUserIds((current) => {
+      const sourceIndex = current.findIndex((userId) => userId === sourceUserId);
+      const targetIndex = current.findIndex((userId) => userId === targetUserId);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+
+      const next = [...current];
+      const [movedUserId] = next.splice(sourceIndex, 1);
+      next.splice(targetIndex, 0, movedUserId);
+      return next;
+    });
+  }, []);
+
+  const handleSaveCustomSequence = useCallback(async () => {
+    setIsSavingSequence(true);
+    setSequenceError("");
+
+    try {
+      const response = await saveStandupSequence(projectId, customSequenceUserIds);
+      setSavedSequenceUserIds(response.sequenceUserIds);
+      addToast({ type: "success", message: "Standup sequence saved." });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save standup sequence";
+      setSequenceError(message);
+      addToast({ type: "error", message });
+    } finally {
+      setIsSavingSequence(false);
+    }
+  }, [addToast, customSequenceUserIds, projectId]);
+
   useEffect(() => {
     if (activeTab !== "standup-view") return;
 
@@ -1355,7 +1498,7 @@ export default function StandupPageClient({
                   <div className="h-full flex flex-col">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                        Progress since yesterday
+                        Yesterday
                       </label>
                       {currentEntry?.isComplete && (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-100">
@@ -1680,6 +1823,7 @@ export default function StandupPageClient({
               ) : (
                 orderedQueue.map((member) => {
                   const isActive = member.user.id === selectedUserId;
+                  const isDragOverTarget = dragOverSequenceUserId === member.user.id;
                   const initials = getInitials(member.user.name ?? member.user.email);
                   const status = queueStatusByUserId.get(member.user.id) ?? "missing";
                   const statusDot =
@@ -1694,10 +1838,47 @@ export default function StandupPageClient({
                       key={member.id}
                       type="button"
                       onClick={() => setSelectedUserId(member.user.id)}
+                      draggable={queueSortMode === "custom"}
+                      onDragStart={(event) => {
+                        if (queueSortMode !== "custom") return;
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", member.user.id);
+                        setDraggedSequenceUserId(member.user.id);
+                        setDragOverSequenceUserId(member.user.id);
+                        setSelectedUserId(member.user.id);
+                      }}
+                      onDragOver={(event) => {
+                        if (queueSortMode !== "custom" || !draggedSequenceUserId) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        if (dragOverSequenceUserId !== member.user.id) {
+                          setDragOverSequenceUserId(member.user.id);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        if (queueSortMode !== "custom") return;
+                        event.preventDefault();
+                        const sourceUserId = event.dataTransfer.getData("text/plain") || draggedSequenceUserId;
+                        if (!sourceUserId) return;
+                        moveCustomSequenceUser(sourceUserId, member.user.id);
+                        setSelectedUserId(sourceUserId);
+                        setDraggedSequenceUserId(null);
+                        setDragOverSequenceUserId(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedSequenceUserId(null);
+                        setDragOverSequenceUserId(null);
+                      }}
                       className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition ${
                         isActive
                           ? "border-blue-500 bg-blue-50 text-slate-900 shadow-sm dark:border-blue-400/80 dark:bg-blue-900/40 dark:text-slate-50"
                           : "border-slate-200 bg-white text-slate-800 hover:border-blue-200 hover:bg-blue-50/70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-slate-800"
+                      } ${
+                        isDragOverTarget && queueSortMode === "custom"
+                          ? "ring-2 ring-blue-300 dark:ring-blue-500/70"
+                          : ""
+                      } ${
+                        draggedSequenceUserId === member.user.id ? "opacity-70" : ""
                       }`}
                     >
                       <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
@@ -1748,6 +1929,12 @@ export default function StandupPageClient({
                 ))}
               </select>
             </div>
+
+            {queueSortMode === "custom" && orderedQueue.length > 1 && (
+              <p className="hidden text-xs text-slate-500 dark:text-slate-400 md:block">
+                Drag teammate cards to reorder the standup sequence, then save order.
+              </p>
+            )}
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
@@ -1858,7 +2045,7 @@ export default function StandupPageClient({
                             <div className="space-y-2 text-sm text-slate-800 dark:text-slate-200">
                               <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  Progress
+                                  Yesterday
                                 </p>
                                 <p
                                   className={`mt-1 whitespace-pre-line rounded-md border p-3 leading-relaxed ${
@@ -2170,15 +2357,42 @@ export default function StandupPageClient({
                       setQueueSortMode(
                         event.target.value === "alphabetical"
                           ? "alphabetical"
-                          : "suggested"
+                          : event.target.value === "custom"
+                            ? "custom"
+                            : "suggested"
                       )
                     }
                     className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   >
                     <option value="suggested">Suggested</option>
                     <option value="alphabetical">Alphabetical</option>
+                    <option value="custom">Custom</option>
                   </select>
                 </div>
+                {queueSortMode === "custom" && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={!selectedUserId}
+                      onClick={() => moveCustomSequence(-1)}
+                    >
+                      Move up
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={!selectedUserId}
+                      onClick={() => moveCustomSequence(1)}
+                    >
+                      Move down
+                    </Button>
+                    <Button
+                      disabled={isSavingSequence || !isSequenceDirty}
+                      onClick={handleSaveCustomSequence}
+                    >
+                      {isSavingSequence ? "Saving..." : "Save order"}
+                    </Button>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <Button
                     variant="secondary"
@@ -2197,6 +2411,9 @@ export default function StandupPageClient({
                   </Button>
                 </div>
               </div>
+              {queueSortMode === "custom" && sequenceError && (
+                <p className="w-full text-xs text-rose-600 dark:text-rose-300">{sequenceError}</p>
+              )}
             </div>
           </div>
         </div>
@@ -2335,7 +2552,7 @@ export default function StandupPageClient({
                         <td className="px-4 py-3 space-y-3 text-slate-800 dark:text-slate-200">
                           <div>
                             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                              Progress
+                              Yesterday
                             </p>
                             <p className="mt-1 whitespace-pre-line rounded-md border border-slate-200 bg-slate-50 p-3 text-sm leading-relaxed dark:border-slate-700 dark:bg-slate-800">
                               {entry.progressSinceYesterday ?? "—"}

@@ -2,6 +2,7 @@ import Logo from "@/components/branding/Logo";
 import { ContactUsSection } from "@/components/marketing/ContactUsSection";
 import { FeaturesSection } from "@/components/marketing/FeaturesSection";
 import { FAQSection } from "@/components/marketing/FAQSection";
+import { RoadmapSection } from "@/components/marketing/RoadmapSection";
 import { UseCasesSection } from "@/components/marketing/UseCasesSection";
 import { WhatsNewSection } from "@/components/marketing/WhatsNewSection";
 import { WorkflowGlanceSection } from "@/components/marketing/WorkflowGlanceSection";
@@ -34,6 +35,9 @@ export default function HomePage() {
             </a>
             <a className="transition hover:text-primary" href="#highlights">
               Highlights
+            </a>
+            <a className="transition hover:text-primary" href="#roadmap">
+              Roadmap
             </a>
             <a className="transition hover:text-primary" href="#screenshots">
               Screenshots
@@ -107,7 +111,7 @@ export default function HomePage() {
 
             <div className="flex flex-wrap items-center gap-3">
               <a
-                href="<PUT_YOUR_GITHUB_REPO_URL_HERE>"
+                href="https://github.com/macmann/b-board"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/30 transition hover:bg-primary/90"
@@ -303,6 +307,8 @@ export default function HomePage() {
             ))}
           </div>
         </section>
+
+        <RoadmapSection />
 
         <section id="screenshots" className="mt-16 space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
