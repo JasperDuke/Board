@@ -1,5 +1,5 @@
 import prisma from "@/lib/db";
-import { parseDateOnly } from "@/lib/standupWindow";
+import { getPreviousStandupDate, parseDateOnly } from "@/lib/standupWindow";
 
 const MAX_LOOKBACK_DAYS = 30;
 
@@ -25,6 +25,31 @@ export const getPreviousStandupEntries = async (
       date: true,
       summaryToday: true,
       todayTasks: true,
+    },
+  });
+};
+
+export const getPreviousStandupDayEntry = async (
+  projectId: string,
+  userId: string,
+  date: Date,
+  skipWeekends = false
+) => {
+  const previousDate = getPreviousStandupDate(date, skipWeekends);
+
+  return prisma.dailyStandupEntry.findUnique({
+    where: {
+      projectId_userId_date: {
+        projectId,
+        userId,
+        date: previousDate,
+      },
+    },
+    select: {
+      date: true,
+      summaryToday: true,
+      todayTasks: true,
+      progressSinceYesterday: true,
     },
   });
 };

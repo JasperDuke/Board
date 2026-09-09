@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import {
   DndContext,
   KeyboardSensor,
@@ -20,8 +21,9 @@ import { CSS } from "@dnd-kit/utilities";
 
 import {
   createEmptyTask,
-  formatDeadlineLabel,
-  isTaskOverdue,
+  formatDeadlineShort,
+  getDeadlineStatus,
+  getDeadlineStatusStyles,
   type StandupPlanTask,
 } from "@/lib/standupTasks";
 
@@ -39,6 +41,40 @@ type SortableTaskRowProps = {
   onRemove: () => void;
 };
 
+const AutoGrowInput = ({
+  value,
+  done,
+  onChange,
+}: {
+  value: string;
+  done: boolean;
+  onChange: (value: string) => void;
+}) => {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.height = "0px";
+    node.style.height = `${Math.max(36, node.scrollHeight)}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      rows={1}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder="What will you work on today?"
+      className={`min-h-9 w-full resize-none overflow-hidden bg-transparent py-1.5 text-sm leading-5 outline-none placeholder:text-slate-400 ${
+        done
+          ? "text-slate-400 line-through dark:text-slate-500"
+          : "text-slate-800 dark:text-slate-100"
+      }`}
+    />
+  );
+};
+
 const SortableTaskRow = ({
   task,
   index,
@@ -49,99 +85,59 @@ const SortableTaskRow = ({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id });
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
-  const overdue = isTaskOverdue(task, referenceDate);
+  const status = getDeadlineStatus(task, referenceDate);
+  const styles = getDeadlineStatusStyles(status);
 
   return (
     <div
       ref={setNodeRef}
-      style={style}
-      className={`group relative overflow-hidden rounded-2xl border bg-white/80 backdrop-blur transition dark:bg-slate-900/70 ${
-        isDragging
-          ? "border-indigo-400 shadow-lg ring-2 ring-indigo-200/60 dark:ring-indigo-500/30"
-          : task.done
-            ? "border-slate-200/70 opacity-80 dark:border-slate-800/70"
-            : "border-slate-200/80 shadow-sm hover:border-indigo-200/80 hover:shadow-md dark:border-slate-800/80 dark:hover:border-indigo-500/30"
-      }`}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      className={`group relative rounded-xl border bg-white/90 dark:bg-slate-900/80 ${styles.border} ${
+        isDragging ? "z-10 shadow-lg ring-1 ring-indigo-300/70" : ""
+      } ${task.done ? "opacity-70" : ""}`}
     >
-      <div
-        aria-hidden="true"
-        className={`absolute inset-y-0 left-0 w-1 ${
-          task.done
-            ? "bg-slate-300 dark:bg-slate-600"
-            : overdue
-              ? "bg-gradient-to-b from-rose-400 to-rose-600"
-              : "bg-gradient-to-b from-indigo-400 to-violet-500"
-        }`}
-      />
+      <div aria-hidden="true" className={`absolute inset-y-2 left-0 w-0.5 rounded-full ${styles.stripe}`} />
 
-      <div className="space-y-3 p-3 pl-4">
-        <div className="flex items-start gap-2">
-          <button
-            type="button"
-            className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-            aria-label="Drag to reorder task"
-            {...attributes}
-            {...listeners}
-          >
-            <span aria-hidden="true" className="text-sm leading-none">⋮⋮</span>
-          </button>
+      <div className="flex items-start gap-2 py-1.5 pl-3 pr-2">
+        <button
+          type="button"
+          className="mt-1.5 grid h-6 w-4 shrink-0 place-items-center text-slate-300 hover:text-slate-500 dark:text-slate-600 dark:hover:text-slate-300"
+          aria-label="Reorder task"
+          {...attributes}
+          {...listeners}
+        >
+          <span className="text-[10px] leading-none tracking-tighter">::</span>
+        </button>
 
-          <span
-            className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-          >
-            {index + 1}
-          </span>
+        <span className="mt-1.5 w-4 shrink-0 text-center text-[11px] tabular-nums text-slate-400 dark:text-slate-500">
+          {index + 1}
+        </span>
 
-          <label className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center">
-            <input
-              type="checkbox"
-              checked={task.done}
-              onChange={(event) => onUpdate({ ...task, done: event.target.checked })}
-              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              aria-label={`Mark "${task.text || "task"}" as done`}
-            />
-          </label>
+        <input
+          type="checkbox"
+          checked={task.done}
+          onChange={(event) => onUpdate({ ...task, done: event.target.checked })}
+          className="mt-2.5 h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          aria-label={`Mark "${task.text || "task"}" as done`}
+        />
 
-          <textarea
+        <div className="min-w-0 flex-1">
+          <AutoGrowInput
             value={task.text}
-            onChange={(event) => onUpdate({ ...task, text: event.target.value })}
-            placeholder="What will you work on today?"
-            rows={Math.min(4, Math.max(1, task.text.split("\n").length))}
-            className={`min-h-[42px] min-w-0 flex-1 resize-y rounded-xl border px-3 py-2 text-sm shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200/70 dark:focus:ring-indigo-500/30 ${
-              task.done
-                ? "border-slate-200/80 bg-slate-50 text-slate-500 line-through dark:border-slate-700 dark:bg-slate-900/60"
-                : "border-slate-200/80 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
-            }`}
+            done={task.done}
+            onChange={(text) => onUpdate({ ...task, text })}
           />
-
-          <button
-            type="button"
-            onClick={onRemove}
-            className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
-            aria-label="Remove task"
-          >
-            ×
-          </button>
+          {task.carriedFrom && !task.done && (
+            <p className="pb-1 text-[10px] font-medium text-amber-600 dark:text-amber-300">
+              Rolled from {task.carriedFrom}
+            </p>
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pl-9">
-          {task.deadline && (
-            <span
-              className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-                overdue
-                  ? "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-200"
-                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-              }`}
-            >
-              {formatDeadlineLabel(task.deadline, referenceDate)}
-            </span>
-          )}
-
+        <label className="mt-1 flex h-8 shrink-0 items-center">
           <input
             type="date"
             value={task.deadline ?? ""}
@@ -151,16 +147,33 @@ const SortableTaskRow = ({
                 deadline: event.target.value || null,
               })
             }
-            className="rounded-xl border border-slate-200/80 bg-white px-3 py-1.5 text-xs text-slate-700 shadow-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200/70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:focus:ring-indigo-500/30"
+            className={`h-8 w-[8.75rem] cursor-pointer rounded-lg border bg-slate-50 px-2 text-[12px] text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200/60 dark:bg-slate-800 dark:text-slate-200 dark:focus:ring-indigo-500/30 [&::-webkit-calendar-picker-indicator]:ml-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-70 ${styles.border}`}
             aria-label="Task deadline"
           />
+        </label>
 
-          {task.carriedFrom && !task.done && (
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200/80 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-900/50">
-              Rolled from {task.carriedFrom}
-            </span>
-          )}
-        </div>
+        {task.deadline && (
+          <span
+            className={`mt-1 hidden h-8 items-center rounded-lg px-2 text-[10px] font-semibold sm:inline-flex ${styles.badge}`}
+          >
+            {status === "overdue"
+              ? "Overdue"
+              : status === "due-today"
+                ? "Today"
+                : formatDeadlineShort(task.deadline)}
+          </span>
+        )}
+
+        <button
+          type="button"
+          onClick={onRemove}
+          className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-300 transition hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950/40 dark:hover:text-rose-300"
+          aria-label="Remove task"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
       </div>
     </div>
   );
@@ -197,7 +210,7 @@ export default function StandupTaskEditor({
   };
 
   const handleAddTask = () => {
-    onChange([...tasks, createEmptyTask(tasks.length)]);
+    onChange([...tasks, createEmptyTask(tasks.length, referenceDate)]);
   };
 
   const handleUpdateTask = (index: number, updatedTask: StandupPlanTask) => {
@@ -213,14 +226,14 @@ export default function StandupTaskEditor({
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <span className="text-sm font-semibold text-slate-900 dark:text-slate-50">
             Today&apos;s plan
           </span>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            One focus per row. Add a deadline so standup stays sharp.
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Green on track · orange due today · red overdue
           </p>
         </div>
         <button
@@ -236,7 +249,7 @@ export default function StandupTaskEditor({
         <button
           type="button"
           onClick={handleAddTask}
-          className="w-full rounded-2xl border border-dashed border-slate-300/90 bg-white/50 px-4 py-8 text-sm text-slate-500 transition hover:border-indigo-300 hover:bg-indigo-50/40 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-400 dark:hover:border-indigo-500/40 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-200"
+          className="w-full rounded-xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 hover:border-indigo-300 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-400"
         >
           Add your first task for today
         </button>
@@ -247,7 +260,7 @@ export default function StandupTaskEditor({
           onDragEnd={handleDragEnd}
         >
           <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2.5">
+            <div className="space-y-1.5">
               {tasks.map((task, index) => (
                 <SortableTaskRow
                   key={task.id}

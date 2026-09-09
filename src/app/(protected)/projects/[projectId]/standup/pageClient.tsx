@@ -4,8 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import AIStandupAssistant from "@/components/standup/AIStandupAssistant";
+import StandupFollowUpView, {
+  type FollowUpMember,
+} from "@/components/standup/StandupFollowUpView";
 import StandupTaskDisplay from "@/components/standup/StandupTaskDisplay";
 import StandupTaskEditor from "@/components/standup/StandupTaskEditor";
+import StandupYesterdayTaskList from "@/components/standup/StandupYesterdayTaskList";
 import { Button } from "@/components/ui/Button";
 import MarkdownRenderer from "@/components/common/MarkdownRenderer";
 import { ProjectRole } from "@/lib/roles";
@@ -13,6 +17,7 @@ import {
   createEmptyTask,
   hasPlanContent,
   parseLegacySummaryToday,
+  syncTodayTasksWithYesterday,
   type StandupPlanTask,
 } from "@/lib/standupTasks";
 import { getPreviousStandupDate } from "@/lib/standupWindow";
@@ -51,6 +56,8 @@ type StandupEntry = {
 type StandupEntryResponse = StandupEntry | {
   todayTasks?: StandupPlanTask[];
   displayTasks?: StandupPlanTask[];
+  yesterdayTasks?: StandupPlanTask[];
+  yesterdayDate?: string | null;
 };
 
 type StandupEntryWithUser = StandupEntry & {
@@ -195,6 +202,8 @@ const upsertMyStandupEntry = async (
     userId?: string;
     summaryToday: string | null;
     todayTasks?: StandupPlanTask[];
+    yesterdayTasks?: StandupPlanTask[];
+    yesterdayDate?: string | null;
     progressSinceYesterday: string | null;
     blockers: string | null;
     dependencies: string | null;
@@ -423,7 +432,7 @@ export default function StandupPageClient({
   projectName,
 }: StandupPageClientProps) {
   const [activeTab, setActiveTab] = useState<
-    "my-update" | "team-dashboard" | "standup-view"
+    "my-update" | "team-dashboard" | "standup-view" | "follow-up"
   >("my-update");
   const [mySelectedDate, setMySelectedDate] = useState(() =>
     toDateInput(new Date())
@@ -471,6 +480,8 @@ export default function StandupPageClient({
     notes: "",
   });
   const [todayTasks, setTodayTasks] = useState<StandupPlanTask[]>([]);
+  const [yesterdayTasks, setYesterdayTasks] = useState<StandupPlanTask[]>([]);
+  const [yesterdayDate, setYesterdayDate] = useState<string | null>(null);
   const [selectedIssues, setSelectedIssues] = useState<StandupIssue[]>([]);
   const [issueQuery, setIssueQuery] = useState("");
   const [issueOptions, setIssueOptions] = useState<StandupIssue[]>([]);
@@ -491,6 +502,12 @@ export default function StandupPageClient({
   const [summary, setSummary] = useState<StandupSummaryResponse | null>(null);
   const [summaryError, setSummaryError] = useState("");
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [followUpDate, setFollowUpDate] = useState(() => toDateInput(new Date()));
+  const [followUpMembers, setFollowUpMembers] = useState<FollowUpMember[]>([]);
+  const [followUpOverdueCount, setFollowUpOverdueCount] = useState(0);
+  const [followUpMemberCount, setFollowUpMemberCount] = useState(0);
+  const [followUpError, setFollowUpError] = useState("");
+  const [isLoadingFollowUp, setIsLoadingFollowUp] = useState(false);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -654,10 +671,16 @@ export default function StandupPageClient({
         const entry =
           entryResponse && "id" in entryResponse ? entryResponse : null;
         const loadedTasks = entryResponse?.todayTasks ?? [];
+        const loadedYesterdayTasks = entryResponse?.yesterdayTasks ?? [];
+        const loadedYesterdayDate = entryResponse?.yesterdayDate ?? null;
 
         setCurrentEntry(entry);
+        setYesterdayTasks(loadedYesterdayTasks);
+        setYesterdayDate(loadedYesterdayDate);
         setTodayTasks(
-          loadedTasks.length > 0 ? loadedTasks : [createEmptyTask()]
+          loadedTasks.length > 0
+            ? loadedTasks
+            : [createEmptyTask(0, mySelectedDate)]
         );
         setFormState({
           summaryToday: entry?.summaryToday ?? "",
@@ -1113,10 +1136,33 @@ export default function StandupPageClient({
     }
   };
 
+  const hasStructuredYesterdayTasks = useMemo(
+    () => yesterdayTasks.some((task) => task.text.trim()),
+    [yesterdayTasks]
+  );
+
+  const handleYesterdayTasksChange = useCallback(
+    (nextYesterdayTasks: StandupPlanTask[]) => {
+      setYesterdayTasks(nextYesterdayTasks);
+      setTodayTasks((currentTodayTasks) =>
+        syncTodayTasksWithYesterday(
+          nextYesterdayTasks,
+          currentTodayTasks,
+          yesterdayDate
+        )
+      );
+    },
+    [yesterdayDate]
+  );
+
   const handleDraftReady = useCallback(
     (draft: { yesterday: string; today: string; blockers: string }) => {
       const parsedTasks = parseLegacySummaryToday(draft.today ?? "", mySelectedDate);
-      setTodayTasks(parsedTasks.length > 0 ? parsedTasks : [createEmptyTask()]);
+      setTodayTasks(
+        parsedTasks.length > 0
+          ? parsedTasks.map((task) => ({ ...task, deadline: task.deadline ?? mySelectedDate }))
+          : [createEmptyTask(0, mySelectedDate)]
+      );
       setFormState((prev) => ({
         ...prev,
         progressSinceYesterday: draft.yesterday ?? "",
@@ -1152,13 +1198,20 @@ export default function StandupPageClient({
       const normalizedTasks = todayTasks
         .map((task, index) => ({ ...task, text: task.text.trim(), sortOrder: index }))
         .filter((task) => task.text);
+      const normalizedYesterdayTasks = yesterdayTasks
+        .map((task, index) => ({ ...task, text: task.text.trim(), sortOrder: index }))
+        .filter((task) => task.text);
 
       const payload = {
         date: mySelectedDate,
         userId: targetUserId !== currentUserId ? targetUserId : undefined,
         summaryToday: formState.summaryToday.trim() || null,
         todayTasks: normalizedTasks,
-        progressSinceYesterday: formState.progressSinceYesterday.trim() || null,
+        yesterdayTasks: hasStructuredYesterdayTasks ? normalizedYesterdayTasks : undefined,
+        yesterdayDate: hasStructuredYesterdayTasks ? yesterdayDate : undefined,
+        progressSinceYesterday: hasStructuredYesterdayTasks
+          ? null
+          : formState.progressSinceYesterday.trim() || null,
         blockers: formState.blockers.trim() || null,
         dependencies: formState.dependencies.trim() || null,
         notes: formState.notes.trim() || null,
@@ -1168,8 +1221,12 @@ export default function StandupPageClient({
 
       const saved = await upsertMyStandupEntry(projectId, payload);
       setCurrentEntry(saved);
+      setYesterdayTasks(saved.yesterdayTasks ?? yesterdayTasks);
+      setYesterdayDate(saved.yesterdayDate ?? yesterdayDate);
       setTodayTasks(
-        saved.todayTasks?.length ? saved.todayTasks : [createEmptyTask()]
+        saved.todayTasks?.length
+          ? saved.todayTasks
+          : [createEmptyTask(0, mySelectedDate)]
       );
       setSelectedIssues(saved.issues.map((link) => link.issue));
       setSelectedResearch(saved.research.map((link) => link.researchItem));
@@ -1222,6 +1279,37 @@ export default function StandupPageClient({
     if (activeTab !== "team-dashboard") return;
     loadSummary();
   }, [activeTab, loadSummary]);
+
+  const loadFollowUp = useCallback(async () => {
+    if (!projectId || !canViewDashboard || !followUpDate) return;
+
+    setIsLoadingFollowUp(true);
+    setFollowUpError("");
+
+    try {
+      const response = await fetch(
+        `/api/projects/${projectId}/standup/follow-up?date=${followUpDate}`
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Unable to load follow-up");
+      }
+      setFollowUpMembers(data.members ?? []);
+      setFollowUpOverdueCount(data.overdueCount ?? 0);
+      setFollowUpMemberCount(data.memberCount ?? 0);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load follow-up";
+      setFollowUpError(message);
+    } finally {
+      setIsLoadingFollowUp(false);
+    }
+  }, [canViewDashboard, followUpDate, projectId]);
+
+  useEffect(() => {
+    if (activeTab !== "follow-up") return;
+    loadFollowUp();
+  }, [activeTab, loadFollowUp]);
 
   const scrollStandupViewToTop = useCallback(() => {
     if (standupViewTopRef.current) {
@@ -1437,6 +1525,16 @@ export default function StandupPageClient({
               >
                 Stand up View
               </button>
+              <button
+                className={`rounded-full px-3 py-1 transition ${
+                  activeTab === "follow-up"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700"
+                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400"
+                }`}
+                onClick={() => setActiveTab("follow-up")}
+              >
+                Follow-up
+              </button>
             </>
           )}
         </div>
@@ -1542,18 +1640,28 @@ export default function StandupPageClient({
                         </span>
                       )}
                     </div>
-                    <textarea
-                      value={formState.progressSinceYesterday}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          progressSinceYesterday: event.target.value,
-                        }))
-                      }
-                      placeholder="Yesterday I finished..."
-                      rows={4}
-                      className="mt-2 flex-1 min-h-[140px] h-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                    />
+                    {hasStructuredYesterdayTasks ? (
+                      <div className="mt-2 flex-1 min-h-[140px]">
+                        <StandupYesterdayTaskList
+                          tasks={yesterdayTasks}
+                          referenceDate={mySelectedDate}
+                          onChange={handleYesterdayTasksChange}
+                        />
+                      </div>
+                    ) : (
+                      <textarea
+                        value={formState.progressSinceYesterday}
+                        onChange={(event) =>
+                          setFormState((prev) => ({
+                            ...prev,
+                            progressSinceYesterday: event.target.value,
+                          }))
+                        }
+                        placeholder="Yesterday I finished..."
+                        rows={4}
+                        className="mt-2 flex-1 min-h-[140px] h-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
+                      />
+                    )}
                     <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 min-h-[16px]">&nbsp;</p>
                   </div>
 
@@ -1784,7 +1892,9 @@ export default function StandupPageClient({
                         dependencies: "",
                         notes: "",
                       });
-                      setTodayTasks([createEmptyTask()]);
+                      setTodayTasks([createEmptyTask(0, mySelectedDate)]);
+                      setYesterdayTasks([]);
+                      setYesterdayDate(null);
                       setSelectedIssues([]);
                       setSelectedResearch([]);
                     }}
@@ -1801,21 +1911,39 @@ export default function StandupPageClient({
         )}
 
       {activeTab === "standup-view" && canViewStandupView && (
-        <div
-          ref={standupViewTopRef}
-          className="space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
-        >
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">
-                Stand up View
-              </h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                Review a teammate's standup while keeping the summary easy to read on shared screens.
-              </p>
+        <div ref={standupViewTopRef} className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                {selectedMember?.user.avatarUrl ? (
+                  <img
+                    src={selectedMember.user.avatarUrl}
+                    alt={selectedMember.user.name ?? "Selected member"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  getInitials(
+                    selectedMember?.user.name ??
+                      selectedMember?.user.email ??
+                      standupViewData?.user.name
+                  ) || "?"
+                )}
+              </div>
+              <div>
+                <h2 className="text-[15px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+                  {standupViewData?.user.name ?? selectedMember?.user.name ?? "Select a teammate"}
+                </h2>
+                <p className="text-[12px] text-slate-500">
+                  {formattedStandupDate}
+                  <span className="mx-1.5 text-slate-300">·</span>
+                  {orderedQueue.length > 0
+                    ? `${queueIndex + 1} / ${orderedQueue.length}`
+                    : "No queue"}
+                </p>
+              </div>
             </div>
-            <div className="flex w-full max-w-xs flex-col gap-2 md:items-end">
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Date</label>
+
+            <div className="flex items-center gap-2">
               <input
                 type="date"
                 value={standupDateInput}
@@ -1827,630 +1955,319 @@ export default function StandupPageClient({
                   parsed.setHours(0, 0, 0, 0);
                   setSelectedDate(parsed);
                 }}
-                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
+                className="h-8 w-[9.5rem] rounded-md border border-slate-200 bg-white px-2 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               />
+              <select
+                value={queueSortMode}
+                onChange={(event) =>
+                  setQueueSortMode(
+                    event.target.value === "alphabetical"
+                      ? "alphabetical"
+                      : event.target.value === "custom"
+                        ? "custom"
+                        : "suggested"
+                  )
+                }
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-[12px] text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+              >
+                <option value="suggested">Suggested</option>
+                <option value="alphabetical">A–Z</option>
+                <option value="custom">Custom</option>
+              </select>
+              <button
+                type="button"
+                disabled={!orderedQueue.length || queueIndex <= 0}
+                onClick={() => moveQueueSelection(-1)}
+                className="h-8 px-2.5 text-[12px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-30 dark:hover:text-slate-100"
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                disabled={!orderedQueue.length || queueIndex >= orderedQueue.length - 1}
+                onClick={() => moveQueueSelection(1)}
+                className="h-8 bg-slate-900 px-3 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-30 dark:bg-slate-100 dark:text-slate-900"
+              >
+                Next
+              </button>
             </div>
           </div>
 
           {membersError && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-              {membersError}
-            </div>
+            <p className="text-sm text-amber-700 dark:text-amber-300">{membersError}</p>
           )}
           {standupViewError && (
-            <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">
-              {standupViewError}
-            </div>
+            <p className="text-sm text-rose-600 dark:text-rose-300">{standupViewError}</p>
           )}
 
-          <div className="space-y-3">
-            <div className="hidden grid-cols-2 gap-3 md:grid lg:grid-cols-3 xl:grid-cols-4">
-              {isLoadingMembers && orderedQueue.length === 0 ? (
-                <div className="col-span-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
-                  Loading members...
-                </div>
-              ) : (
-                orderedQueue.map((member) => {
-                  const isActive = member.user.id === selectedUserId;
-                  const isDragOverTarget = dragOverSequenceUserId === member.user.id;
-                  const initials = getInitials(member.user.name ?? member.user.email);
-                  const status = queueStatusByUserId.get(member.user.id) ?? "missing";
-                  const statusDot =
-                    status === "updated"
-                      ? "bg-emerald-500"
-                      : status === "partial"
-                        ? "bg-amber-400"
-                        : "bg-slate-300 dark:bg-slate-600";
-
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      onClick={() => setSelectedUserId(member.user.id)}
-                      draggable={queueSortMode === "custom"}
-                      onDragStart={(event) => {
-                        if (queueSortMode !== "custom") return;
-                        event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", member.user.id);
-                        setDraggedSequenceUserId(member.user.id);
+          <div className="flex gap-1.5 overflow-x-auto pb-1">
+            {isLoadingMembers && orderedQueue.length === 0 ? (
+              <p className="text-xs text-slate-400">Loading members...</p>
+            ) : (
+              orderedQueue.map((member) => {
+                const isActive = member.user.id === selectedUserId;
+                const status = queueStatusByUserId.get(member.user.id) ?? "missing";
+                return (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedUserId(member.user.id)}
+                    draggable={queueSortMode === "custom"}
+                    onDragStart={(event) => {
+                      if (queueSortMode !== "custom") return;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", member.user.id);
+                      setDraggedSequenceUserId(member.user.id);
+                      setDragOverSequenceUserId(member.user.id);
+                      setSelectedUserId(member.user.id);
+                    }}
+                    onDragOver={(event) => {
+                      if (queueSortMode !== "custom" || !draggedSequenceUserId) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      if (dragOverSequenceUserId !== member.user.id) {
                         setDragOverSequenceUserId(member.user.id);
-                        setSelectedUserId(member.user.id);
-                      }}
-                      onDragOver={(event) => {
-                        if (queueSortMode !== "custom" || !draggedSequenceUserId) return;
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = "move";
-                        if (dragOverSequenceUserId !== member.user.id) {
-                          setDragOverSequenceUserId(member.user.id);
-                        }
-                      }}
-                      onDrop={(event) => {
-                        if (queueSortMode !== "custom") return;
-                        event.preventDefault();
-                        const sourceUserId = event.dataTransfer.getData("text/plain") || draggedSequenceUserId;
-                        if (!sourceUserId) return;
-                        moveCustomSequenceUser(sourceUserId, member.user.id);
-                        setSelectedUserId(sourceUserId);
-                        setDraggedSequenceUserId(null);
-                        setDragOverSequenceUserId(null);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedSequenceUserId(null);
-                        setDragOverSequenceUserId(null);
-                      }}
-                      className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition ${
-                        isActive
-                          ? "border-blue-500 bg-blue-50 text-slate-900 shadow-sm dark:border-blue-400/80 dark:bg-blue-900/40 dark:text-slate-50"
-                          : "border-slate-200 bg-white text-slate-800 hover:border-blue-200 hover:bg-blue-50/70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-slate-800"
-                      } ${
-                        isDragOverTarget && queueSortMode === "custom"
-                          ? "ring-2 ring-blue-300 dark:ring-blue-500/70"
-                          : ""
-                      } ${
-                        draggedSequenceUserId === member.user.id ? "opacity-70" : ""
+                      }
+                    }}
+                    onDrop={(event) => {
+                      if (queueSortMode !== "custom") return;
+                      event.preventDefault();
+                      const sourceUserId =
+                        event.dataTransfer.getData("text/plain") || draggedSequenceUserId;
+                      if (!sourceUserId) return;
+                      moveCustomSequenceUser(sourceUserId, member.user.id);
+                      setSelectedUserId(sourceUserId);
+                      setDraggedSequenceUserId(null);
+                      setDragOverSequenceUserId(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedSequenceUserId(null);
+                      setDragOverSequenceUserId(null);
+                    }}
+                    className={`shrink-0 border-b-2 px-2 py-1 text-[12px] transition ${
+                      isActive
+                        ? "border-slate-900 font-medium text-slate-900 dark:border-slate-100 dark:text-slate-50"
+                        : "border-transparent text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                    }`}
+                  >
+                    <span
+                      className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
+                        status === "updated"
+                          ? "bg-emerald-500"
+                          : status === "partial"
+                            ? "bg-amber-400"
+                            : "bg-slate-300"
                       }`}
-                    >
-                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
-                        {member.user.avatarUrl ? (
-                          <img
-                            src={member.user.avatarUrl}
-                            alt={member.user.name ?? "Member avatar"}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          initials || "?"
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                          {member.user.name ?? member.user.email}
-                        </p>
-                        <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                          {member.role}
-                        </p>
-                      </div>
-                      <span
-                        aria-hidden="true"
-                        className={`h-2.5 w-2.5 rounded-full ${statusDot}`}
-                      />
-                    </button>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="space-y-2 md:hidden">
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                Select user
-              </label>
-              <select
-                value={selectedUserId ?? ""}
-                onChange={(event) => setSelectedUserId(event.target.value || null)}
-                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-              >
-                <option value="" disabled>
-                  {isLoadingMembers ? "Loading members..." : "Choose a user"}
-                </option>
-                {orderedQueue.map((member) => (
-                  <option key={member.id} value={member.user.id}>
+                    />
                     {member.user.name ?? member.user.email}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {queueSortMode === "custom" && orderedQueue.length > 1 && (
-              <p className="hidden text-xs text-slate-500 dark:text-slate-400 md:block">
-                Drag teammate cards to reorder the standup sequence, then save order.
-              </p>
+                  </button>
+                );
+              })
             )}
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/70">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
-                    {selectedMember?.user.avatarUrl ? (
-                      <img
-                        src={selectedMember.user.avatarUrl}
-                        alt={selectedMember.user.name ?? "Selected member"}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      getInitials(
-                        selectedMember?.user.name ??
-                          selectedMember?.user.email ??
-                          standupViewData?.user.name
-                      ) || "?"
+          {queueSortMode === "custom" && (
+            <div className="flex flex-wrap items-center gap-2 text-[12px]">
+              <span className="text-slate-400">Drag names to reorder.</span>
+              <button
+                type="button"
+                disabled={isSavingSequence || !isSequenceDirty}
+                onClick={handleSaveCustomSequence}
+                className="font-medium text-slate-700 underline-offset-2 hover:underline disabled:opacity-40 dark:text-slate-200"
+              >
+                {isSavingSequence ? "Saving..." : "Save order"}
+              </button>
+              {sequenceError && <span className="text-rose-500">{sequenceError}</span>}
+            </div>
+          )}
+
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_200px]">
+            {[
+              {
+                key: "yesterday",
+                label: "Yesterday",
+                dateLabel: formattedYesterdayDate,
+                entries: yesterdayEntries,
+                empty: "No update yesterday.",
+              },
+              {
+                key: "today",
+                label: "Today",
+                dateLabel: formattedStandupDate,
+                entries: todayEntries,
+                empty: "No update yet.",
+              },
+            ].map((section) => {
+              const isTodaySection = section.key === "today";
+              const highlightMissing = isTodaySection && todayStatus === "partial";
+
+              return (
+                <section key={section.key} className="min-w-0">
+                  <div className="mb-4 flex items-baseline justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                        {section.label}
+                      </p>
+                      <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-50">
+                        {section.dateLabel}
+                      </p>
+                    </div>
+                    {isTodaySection && todayStatus === "partial" && (
+                      <span className="text-[11px] font-medium text-amber-600">Partial</span>
+                    )}
+                    {isTodaySection && todayStatus === "updated" && (
+                      <span className="text-[11px] font-medium text-emerald-600">Ready</span>
                     )}
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                      {standupViewData?.user.name ?? selectedMember?.user.name ?? "Select a user"}
-                    </p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Standup for {formattedStandupDate}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-xs text-slate-600 dark:text-slate-300">
-                  Yesterday: {formattedYesterdayDate}
-                </div>
-              </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                {[
-                  {
-                    key: "yesterday",
-                    title: `Yesterday (${formattedYesterdayDate})`,
-                    entries: yesterdayEntries,
-                    empty: "No standup update for yesterday",
-                  },
-                  {
-                    key: "today",
-                    title: `Today (${formattedStandupDate})`,
-                    entries: todayEntries,
-                    empty: "No standup update for today yet.",
-                  },
-                ].map((section) => {
-                  const isTodaySection = section.key === "today";
-                  const highlightMissing = isTodaySection && todayStatus === "partial";
+                  {isLoadingStandupView ? (
+                    <p className="text-sm text-slate-400">Loading...</p>
+                  ) : section.entries.length === 0 ? (
+                    <p className="text-sm text-slate-400">{section.empty}</p>
+                  ) : (
+                    section.entries.map((entry) => {
+                      const blockers = entry.blockers?.trim();
+                      const dependencies = entry.dependencies?.trim();
+                      const progress = entry.progressSinceYesterday?.trim();
+                      const hasLinked = entry.issues.length + entry.research.length > 0;
 
-                  return (
-                  <div
-                    key={section.title}
-                    className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
-                  >
-                    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/70">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                          {section.title}
-                        </p>
-                        {isTodaySection && todayStatus === "partial" && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
-                            🟡 Partial
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {standupViewData?.user.name ??
-                          selectedMember?.user.name ??
-                          "Select a user to view updates"}
-                      </p>
-                    </div>
-                    <div className="space-y-3 p-4">
-                      {isLoadingStandupView ? (
-                        <p className="text-sm text-slate-600 dark:text-slate-300">
-                          Loading stand-up details...
-                        </p>
-                      ) : section.entries.length === 0 ? (
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
-                          {section.empty}
-                        </p>
-                      ) : (
-                        section.entries.map((entry) => (
-                          <div
-                            key={entry.id}
-                            className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800"
-                          >
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                                Plan & Progress
-                              </p>
-                              <span
-                                className={`inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold ${
-                                  getStandupEntryStatus(entry) === "updated"
-                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200"
-                                    : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                                }`}
-                              >
-                                {getStandupEntryStatus(entry) === "updated"
-                                  ? "Complete"
-                                  : "Incomplete"}
-                              </span>
+                      return (
+                        <div key={entry.id} className="space-y-5">
+                          <StandupTaskDisplay
+                            tasks={entry.displayTasks ?? entry.todayTasks}
+                            summaryToday={entry.summaryToday}
+                            entryDate={entry.date}
+                            referenceDate={
+                              isTodaySection
+                                ? standupDateInput
+                                : toDateInput(yesterdayDate)
+                            }
+                            highlightMissing={
+                              highlightMissing && todayMissingSections.today
+                            }
+                            variant="presentation"
+                          />
+
+                          {isTodaySection && progress && progress !== "—" && (
+                            <p className="text-[12px] leading-5 text-slate-500">
+                              <span className="font-medium text-slate-400">Finished · </span>
+                              {progress}
+                            </p>
+                          )}
+
+                          {(blockers && blockers !== "—") ||
+                          (dependencies && dependencies !== "—") ? (
+                            <div className="space-y-1 text-[12px] leading-5 text-slate-500">
+                              {blockers && blockers !== "—" && (
+                                <p>
+                                  <span className="font-medium text-rose-500">Blocked · </span>
+                                  {blockers}
+                                </p>
+                              )}
+                              {dependencies && dependencies !== "—" && (
+                                <p>
+                                  <span className="font-medium text-slate-400">Needs · </span>
+                                  {dependencies}
+                                </p>
+                              )}
                             </div>
+                          ) : null}
 
-                            <div className="space-y-2 text-sm text-slate-800 dark:text-slate-200">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  Yesterday
-                                </p>
-                                <p
-                                  className={`mt-1 whitespace-pre-line rounded-md border p-3 leading-relaxed ${
-                                    highlightMissing && todayMissingSections.progress
-                                      ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-100"
-                                      : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-                                  }`}
-                                >
-                                  {entry.progressSinceYesterday ?? "—"}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  Today
-                                </p>
-                                <StandupTaskDisplay
-                                  tasks={entry.displayTasks ?? entry.todayTasks}
-                                  summaryToday={entry.summaryToday}
-                                  entryDate={entry.date}
-                                  referenceDate={
-                                    isTodaySection
-                                      ? standupDateInput
-                                      : toDateInput(yesterdayDate)
-                                  }
-                                  highlightMissing={
-                                    highlightMissing && todayMissingSections.today
-                                  }
-                                  variant="presentation"
-                                />
-                              </div>
-                            </div>
+                          {hasLinked && (
+                            <div className="pt-1">{renderLinkedWork(entry)}</div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </section>
+              );
+            })}
 
-                            <div className="grid gap-3 sm:grid-cols-2">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  Blockers
-                                </p>
-                                <p
-                                  className={`mt-1 whitespace-pre-line rounded-md border p-3 text-sm leading-relaxed ${
-                                    highlightMissing && todayMissingSections.blockers
-                                      ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-100"
-                                      : "border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                                  }`}
-                                >
-                                  {entry.blockers ?? "—"}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                  Dependencies
-                                </p>
-                                <p
-                                  className={`mt-1 whitespace-pre-line rounded-md border p-3 text-sm leading-relaxed ${
-                                    highlightMissing && todayMissingSections.dependencies
-                                      ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-100"
-                                      : "border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                                  }`}
-                                >
-                                  {entry.dependencies ?? "—"}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                Linked work
-                              </p>
-                              <div
-                                className={`mt-1 rounded-md ${
-                                  highlightMissing && todayMissingSections.linkedWork
-                                    ? "border border-amber-300 bg-amber-50 p-3 dark:border-amber-600/60 dark:bg-amber-950/40"
-                                    : ""
-                                }`}
-                              >
-                                {renderLinkedWork(entry)}
-                              </div>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-                })}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                    Next up
-                  </h3>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                    Queue
-                  </span>
-                </div>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  Rotate through teammates to keep the flow going.
+            <aside className="space-y-6 border-t border-slate-100 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 dark:border-slate-800">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                  Next
                 </p>
-                {isLoadingQueueEntries && (
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    Updating queue status...
-                  </p>
-                )}
-                {queueEntriesError && (
-                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-                    {queueEntriesError}
-                  </p>
-                )}
-                <div className="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-200">
-                  {orderedQueue.length === 0 ? (
-                    <>
-                      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60">
-                        Add teammates to the project to fill the queue.
-                      </p>
-                      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60">
-                        Invite another teammate.
-                      </p>
-                    </>
-                  ) : upcomingQueue.length === 0 ? (
-                    <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60">
-                      End of the queue.
-                    </p>
+                <div className="mt-2 space-y-1">
+                  {upcomingQueue.length === 0 ? (
+                    <p className="text-[12px] text-slate-400">End of queue.</p>
                   ) : (
                     upcomingQueue.map((member) => (
-                      <div
-                        key={member.id}
-                        className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`h-2.5 w-2.5 rounded-full ${
-                            (queueStatusByUserId.get(member.user.id) ?? "missing") ===
-                            "updated"
-                              ? "bg-emerald-500"
-                              : (queueStatusByUserId.get(member.user.id) ?? "missing") ===
-                                  "partial"
-                                ? "bg-amber-400"
-                                : "bg-slate-300 dark:bg-slate-600"
-                          }`}
-                        />
+                      <p key={member.id} className="text-[13px] text-slate-600 dark:text-slate-300">
                         {member.user.name ?? member.user.email}
-                      </div>
+                      </p>
                     ))
                   )}
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                  Facilitator Notes (private)
-                </h3>
-                <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  Keep private reminders while you guide the stand-up.
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+                  Note
                 </p>
-                <div className="mt-3 space-y-3 text-sm text-slate-700 dark:text-slate-200">
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                      New note
-                    </label>
-                    <textarea
-                      ref={facilitatorNoteInputRef}
-                      value={newFacilitatorNote}
-                      onChange={(event) => setNewFacilitatorNote(event.target.value)}
-                      rows={3}
-                      placeholder={`Note about ${
-                        standupViewData?.user.name ??
-                        selectedMember?.user.name ??
-                        "this teammate"
-                      }`}
-                      className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                    />
-                    <div className="flex justify-end">
-                      <Button
-                        size="sm"
-                        onClick={handleCreateFacilitatorNote}
-                        disabled={isSavingFacilitatorNote}
-                      >
-                        {isSavingFacilitatorNote ? "Saving..." : "Save note"}
-                      </Button>
-                    </div>
-                  </div>
+                <textarea
+                  ref={facilitatorNoteInputRef}
+                  value={newFacilitatorNote}
+                  onChange={(event) => setNewFacilitatorNote(event.target.value)}
+                  rows={2}
+                  placeholder="Private note"
+                  className="mt-2 w-full resize-none border-0 border-b border-slate-200 bg-transparent px-0 py-1 text-[13px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateFacilitatorNote}
+                  disabled={isSavingFacilitatorNote}
+                  className="mt-2 text-[12px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40 dark:hover:text-slate-100"
+                >
+                  {isSavingFacilitatorNote ? "Saving..." : "Save"}
+                </button>
 
-                  {facilitatorNotesError && (
-                    <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-                      {facilitatorNotesError}
-                    </p>
-                  )}
-
-                  {isLoadingFacilitatorNotes ? (
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Loading notes...
-                    </p>
-                  ) : facilitatorNotes.length === 0 ? (
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      No facilitator notes yet.
-                    </p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {facilitatorNotes.map((note) => {
-                        const isEditing = editingNoteId === note.id;
-                        return (
-                          <li
-                            key={note.id}
-                            className="space-y-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/60"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div className="flex-1 space-y-2">
-                                {isEditing ? (
-                                  <textarea
-                                    value={editingNoteText}
-                                    onChange={(event) =>
-                                      setEditingNoteText(event.target.value)
-                                    }
-                                    rows={3}
-                                    className="w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50"
-                                  />
-                                ) : (
-                                  <p
-                                    className={`whitespace-pre-line text-sm ${
-                                      note.resolved
-                                        ? "text-slate-400 line-through dark:text-slate-400"
-                                        : "text-slate-800 dark:text-slate-100"
-                                    }`}
-                                  >
-                                    {note.text}
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                                  <span>Added {formatTimeOnly(note.createdAt)}</span>
-                                  {note.resolved && note.resolvedAt && (
-                                    <span>Resolved {formatTimeOnly(note.resolvedAt)}</span>
-                                  )}
-                                  {note.resolved && (
-                                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
-                                      Resolved
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                {isEditing ? (
-                                  <>
-                                    <Button size="sm" onClick={handleSaveEdit}>
-                                      Save
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="secondary"
-                                      onClick={handleCancelEdit}
-                                    >
-                                      Cancel
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      variant="secondary"
-                                      onClick={() => handleEditFacilitatorNote(note)}
-                                    >
-                                      Edit
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="secondary"
-                                      onClick={() => handleToggleResolved(note)}
-                                    >
-                                      {note.resolved ? "Reopen" : "Resolve"}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => handleDeleteFacilitatorNote(note.id)}
-                                    >
-                                      Delete
-                                    </Button>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="sticky bottom-0 z-10 -mx-6 mt-4 border-t border-slate-200 bg-white px-6 py-3 dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="space-y-1">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Current teammate</p>
-                <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                  {standupViewData?.user.name ?? selectedMember?.user.name ?? "Select a user"}
-                </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {orderedQueue.length > 0
-                    ? `Position ${queueIndex + 1} of ${orderedQueue.length}`
-                    : "Queue empty"}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                    Order
-                  </label>
-                  <select
-                    value={queueSortMode}
-                    onChange={(event) =>
-                      setQueueSortMode(
-                        event.target.value === "alphabetical"
-                          ? "alphabetical"
-                          : event.target.value === "custom"
-                            ? "custom"
-                            : "suggested"
-                      )
-                    }
-                    className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="suggested">Suggested</option>
-                    <option value="alphabetical">Alphabetical</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </div>
-                {queueSortMode === "custom" && (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedUserId}
-                      onClick={() => moveCustomSequence(-1)}
-                    >
-                      Move up
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedUserId}
-                      onClick={() => moveCustomSequence(1)}
-                    >
-                      Move down
-                    </Button>
-                    <Button
-                      disabled={isSavingSequence || !isSequenceDirty}
-                      onClick={handleSaveCustomSequence}
-                    >
-                      {isSavingSequence ? "Saving..." : "Save order"}
-                    </Button>
-                  </div>
+                {facilitatorNotesError && (
+                  <p className="mt-2 text-[11px] text-amber-600">{facilitatorNotesError}</p>
                 )}
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    disabled={!orderedQueue.length || queueIndex <= 0}
-                    onClick={() => moveQueueSelection(-1)}
-                  >
-                    Prev
-                  </Button>
-                  <Button
-                    disabled={
-                      !orderedQueue.length || queueIndex >= orderedQueue.length - 1
-                    }
-                    onClick={() => moveQueueSelection(1)}
-                  >
-                    Next
-                  </Button>
-                </div>
+
+                <ul className="mt-3 space-y-2">
+                  {facilitatorNotes.map((note) => (
+                    <li key={note.id} className="text-[12px] leading-5 text-slate-500">
+                      <p className={note.resolved ? "line-through text-slate-400" : "text-slate-600 dark:text-slate-300"}>
+                        {note.text}
+                      </p>
+                      <div className="mt-0.5 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleResolved(note)}
+                          className="text-[11px] text-slate-400 hover:text-slate-700"
+                        >
+                          {note.resolved ? "Reopen" : "Resolve"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteFacilitatorNote(note.id)}
+                          className="text-[11px] text-slate-400 hover:text-rose-500"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              {queueSortMode === "custom" && sequenceError && (
-                <p className="w-full text-xs text-rose-600 dark:text-rose-300">{sequenceError}</p>
-              )}
-            </div>
+            </aside>
           </div>
         </div>
+      )}
+
+      {activeTab === "follow-up" && canViewDashboard && (
+        <StandupFollowUpView
+          date={followUpDate}
+          onDateChange={setFollowUpDate}
+          isLoading={isLoadingFollowUp}
+          error={followUpError}
+          overdueCount={followUpOverdueCount}
+          memberCount={followUpMemberCount}
+          members={followUpMembers}
+        />
       )}
 
       {activeTab === "team-dashboard" && canViewDashboard && (

@@ -11,12 +11,18 @@ import { resolveProjectId, type ProjectParams } from "@/lib/params";
 import { Prisma } from "@prisma/client";
 
 import { Role } from "@/lib/prismaEnums";
-import { getPreviousStandupEntries } from "@/lib/standupTaskQueries";
+import {
+  getPreviousStandupDayEntry,
+  getPreviousStandupEntries,
+  toDateInputValue,
+} from "@/lib/standupTaskQueries";
 import {
   buildEditableTasksForDate,
+  buildYesterdayReviewTasks,
   hasPlanContent,
   mergeOpenTasksForDate,
   normalizeIncomingTasks,
+  tasksToProgressSinceYesterday,
   tasksToSummaryToday,
 } from "@/lib/standupTasks";
 import { parseDateOnly, parseTimeOnDate } from "@/lib/standupWindow";
@@ -129,8 +135,29 @@ export async function GET(
     include: standupInclude,
   });
 
-  const previousEntries = await getPreviousStandupEntries(projectId, targetUserId, date);
-  const editableTasks = buildEditableTasksForDate(previousEntries, entry, date);
+  const settings = await prisma.projectSettings.findUnique({
+    where: { projectId },
+    select: { standupWeekendDisabled: true },
+  });
+
+  const [previousEntries, previousDayEntry] = await Promise.all([
+    getPreviousStandupEntries(projectId, targetUserId, date),
+    getPreviousStandupDayEntry(
+      projectId,
+      targetUserId,
+      date,
+      settings?.standupWeekendDisabled ?? false
+    ),
+  ]);
+
+  const yesterdayTasks = buildYesterdayReviewTasks(previousDayEntry);
+  const yesterdayDate = previousDayEntry ? toDateInputValue(previousDayEntry.date) : null;
+  const editableTasks = buildEditableTasksForDate(
+    previousEntries,
+    previousDayEntry,
+    entry,
+    date
+  );
   const displayTasks = entry
     ? mergeOpenTasksForDate(previousEntries, entry, date)
     : editableTasks;
@@ -139,6 +166,8 @@ export async function GET(
     return NextResponse.json({
       todayTasks: editableTasks,
       displayTasks,
+      yesterdayTasks,
+      yesterdayDate,
     });
   }
 
@@ -146,6 +175,8 @@ export async function GET(
     ...entry,
     todayTasks: editableTasks,
     displayTasks,
+    yesterdayTasks,
+    yesterdayDate,
   });
 }
 
@@ -206,6 +237,8 @@ const upsertEntry = async (
     issueIds: issueIdsInput,
     researchIds: researchIdsInput,
     todayTasks: todayTasksInput,
+    yesterdayTasks: yesterdayTasksInput,
+    yesterdayDate: yesterdayDateInput,
   } = body ?? {};
 
   const date = parseDateOnly(dateInput ?? new Date());
@@ -297,11 +330,15 @@ const upsertEntry = async (
   const validIssueIds = validIssues.map((issue) => issue.id);
   const validResearchIds = validResearchItems.map((researchItem) => researchItem.id);
   const normalizedTasks = normalizeIncomingTasks(todayTasksInput);
+  const normalizedYesterdayTasks = normalizeIncomingTasks(yesterdayTasksInput);
   const normalizedSummaryToday =
     normalizedTasks.length > 0
       ? tasksToSummaryToday(normalizedTasks)
       : todayPlan ?? summaryToday;
-  const normalizedProgress = yesterdayWork ?? progressSinceYesterday;
+  const yesterdayDate = parseDateOnly(yesterdayDateInput ?? null);
+  const generatedProgress = tasksToProgressSinceYesterday(normalizedYesterdayTasks);
+  const normalizedProgress =
+    generatedProgress ?? yesterdayWork ?? progressSinceYesterday;
   const normalizedBlockers = blockersInput ?? null;
   const storedTodayTasks = normalizedTasks.length > 0 ? normalizedTasks : null;
   const isComplete = computeCompletion(normalizedSummaryToday, [
@@ -310,6 +347,32 @@ const upsertEntry = async (
   ], storedTodayTasks);
 
   const entry = await prisma.$transaction(async (tx) => {
+    if (yesterdayDate && normalizedYesterdayTasks.length > 0) {
+      await tx.dailyStandupEntry.upsert({
+        where: {
+          projectId_userId_date: {
+            projectId,
+            userId: targetUserId,
+            date: yesterdayDate,
+          },
+        },
+        update: {
+          todayTasks: normalizedYesterdayTasks,
+          summaryToday: tasksToSummaryToday(normalizedYesterdayTasks),
+          progressSinceYesterday: generatedProgress,
+        },
+        create: {
+          projectId,
+          userId: targetUserId,
+          date: yesterdayDate,
+          todayTasks: normalizedYesterdayTasks,
+          summaryToday: tasksToSummaryToday(normalizedYesterdayTasks),
+          progressSinceYesterday: generatedProgress,
+          isComplete: false,
+        },
+      });
+    }
+
     const upserted = await tx.dailyStandupEntry.upsert({
       where: {
         projectId_userId_date: {
@@ -416,8 +479,31 @@ const upsertEntry = async (
     return NextResponse.json({ message: "Unable to load saved entry" }, { status: 500 });
   }
 
-  const previousEntries = await getPreviousStandupEntries(projectId, targetUserId, date);
-  const editableTasks = buildEditableTasksForDate(previousEntries, result, date);
+  const settings = await prisma.projectSettings.findUnique({
+    where: { projectId },
+    select: { standupWeekendDisabled: true },
+  });
+
+  const [previousEntries, previousDayEntry] = await Promise.all([
+    getPreviousStandupEntries(projectId, targetUserId, date),
+    getPreviousStandupDayEntry(
+      projectId,
+      targetUserId,
+      date,
+      settings?.standupWeekendDisabled ?? false
+    ),
+  ]);
+
+  const yesterdayTasks = buildYesterdayReviewTasks(previousDayEntry);
+  const yesterdayDateValue = previousDayEntry
+    ? toDateInputValue(previousDayEntry.date)
+    : null;
+  const editableTasks = buildEditableTasksForDate(
+    previousEntries,
+    previousDayEntry,
+    result,
+    date
+  );
   const displayTasks = mergeOpenTasksForDate(previousEntries, result, date);
 
   return NextResponse.json(
@@ -425,6 +511,8 @@ const upsertEntry = async (
       ...result,
       todayTasks: editableTasks,
       displayTasks,
+      yesterdayTasks,
+      yesterdayDate: yesterdayDateValue,
     },
     { status: 200 }
   );

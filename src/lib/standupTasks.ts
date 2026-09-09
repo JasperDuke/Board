@@ -15,7 +15,7 @@ type StandupEntryLike = {
   todayTasks?: unknown;
 };
 
-const toDateKey = (value: Date | string) => {
+export const toDateKey = (value: Date | string) => {
   const parsed = parseDateOnly(value);
   if (!parsed) return "";
 
@@ -23,6 +23,13 @@ const toDateKey = (value: Date | string) => {
   const month = String(parsed.getMonth() + 1).padStart(2, "0");
   const day = String(parsed.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+};
+
+export const daysBetweenKeys = (fromKey: string, toKey: string) => {
+  const from = parseDateOnly(fromKey);
+  const to = parseDateOnly(toKey);
+  if (!from || !to) return 0;
+  return Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 };
 
 const createTaskId = () =>
@@ -220,28 +227,57 @@ export const mergeOpenTasksForDate = (
     .map((task, index) => ({ ...task, sortOrder: index }));
 };
 
+export const buildYesterdayReviewTasks = (
+  previousDayEntry: StandupEntryLike | null
+): StandupPlanTask[] => {
+  if (!previousDayEntry) return [];
+
+  const structured = parseStructuredTodayTasks(previousDayEntry.todayTasks);
+  if (structured.length > 0) return structured;
+
+  return parseLegacySummaryToday(
+    previousDayEntry.summaryToday,
+    toDateKey(previousDayEntry.date)
+  );
+};
+
+export const getRolledTasksFromPreviousDay = (
+  previousDayEntry: StandupEntryLike | null
+): StandupPlanTask[] => {
+  if (!previousDayEntry) return [];
+
+  const previousDateKey = toDateKey(previousDayEntry.date);
+
+  return parseStructuredTodayTasks(previousDayEntry.todayTasks)
+    .filter((task) => !task.done)
+    .map((task, index) => ({
+      ...task,
+      carriedFrom: previousDateKey,
+      done: false,
+      sortOrder: index,
+    }));
+};
+
 export const buildEditableTasksForDate = (
   previousEntries: StandupEntryLike[],
+  previousDayEntry: StandupEntryLike | null,
   currentEntry: StandupEntryLike | null,
   targetDate: Date | string
 ): StandupPlanTask[] => {
-  const carriedTasks = mergeOpenTasksForDate(previousEntries, null, targetDate);
-  const targetDateKey = toDateKey(targetDate);
-  const currentDateKey = currentEntry ? toDateKey(currentEntry.date) : targetDateKey;
+  const previousDateKey = previousDayEntry ? toDateKey(previousDayEntry.date) : null;
+  const rolledFromYesterday = getRolledTasksFromPreviousDay(previousDayEntry);
+
+  const olderEntries = previousDateKey
+    ? previousEntries.filter((entry) => toDateKey(entry.date) !== previousDateKey)
+    : previousEntries;
+  const olderCarried = mergeOpenTasksForDate(olderEntries, null, targetDate);
 
   const currentTasks = currentEntry
-    ? parseStoredTodayTasks(
-        currentEntry.todayTasks,
-        currentEntry.summaryToday,
-        currentDateKey
-      )
+    ? parseStructuredTodayTasks(currentEntry.todayTasks)
     : [];
 
   const merged = new Map<string, StandupPlanTask>();
-  for (const task of carriedTasks) {
-    merged.set(task.id, task);
-  }
-  for (const task of currentTasks) {
+  for (const task of [...olderCarried, ...rolledFromYesterday, ...currentTasks]) {
     merged.set(task.id, task);
   }
 
@@ -253,6 +289,41 @@ export const buildEditableTasksForDate = (
     .map((task, index) => ({ ...task, sortOrder: index }));
 };
 
+export const syncTodayTasksWithYesterday = (
+  yesterdayTasks: StandupPlanTask[],
+  todayTasks: StandupPlanTask[],
+  yesterdayDate?: string | null
+): StandupPlanTask[] => {
+  const openYesterdayIds = new Set(
+    yesterdayTasks.filter((task) => !task.done).map((task) => task.id)
+  );
+
+  const keptToday = todayTasks.filter(
+    (task) => !task.carriedFrom || openYesterdayIds.has(task.id)
+  );
+
+  const rolled = yesterdayTasks
+    .filter((task) => !task.done)
+    .filter((task) => !keptToday.some((todayTask) => todayTask.id === task.id))
+    .map((task) => ({
+      ...task,
+      carriedFrom: yesterdayDate ?? task.carriedFrom,
+      done: false,
+    }));
+
+  return [...keptToday, ...rolled].map((task, index) => ({
+    ...task,
+    sortOrder: index,
+  }));
+};
+
+export const tasksToProgressSinceYesterday = (tasks: StandupPlanTask[]) => {
+  const completed = tasks.filter((task) => task.done && task.text.trim());
+  if (!completed.length) return null;
+
+  return completed.map((task) => `- [x] ${task.text.trim()}`).join("\n");
+};
+
 export const normalizeIncomingTasks = (input: unknown): StandupPlanTask[] => {
   if (!Array.isArray(input)) return [];
 
@@ -262,10 +333,58 @@ export const normalizeIncomingTasks = (input: unknown): StandupPlanTask[] => {
     .map((task, index) => ({ ...task, sortOrder: index }));
 };
 
-export const createEmptyTask = (sortOrder = 0): StandupPlanTask => ({
+export type DeadlineStatus = "none" | "on-track" | "due-today" | "overdue";
+
+export const getDeadlineStatus = (
+  task: StandupPlanTask,
+  referenceDate: Date | string
+): DeadlineStatus => {
+  if (!task.deadline) return "none";
+  if (isTaskOverdue(task, referenceDate)) return "overdue";
+  if (isTaskDueToday(task, referenceDate)) return "due-today";
+  return "on-track";
+};
+
+export const getDeadlineStatusStyles = (status: DeadlineStatus) => {
+  switch (status) {
+    case "overdue":
+      return {
+        stripe: "bg-gradient-to-b from-rose-400 to-rose-600",
+        badge:
+          "bg-rose-100 text-rose-700 ring-1 ring-rose-200/80 dark:bg-rose-950/60 dark:text-rose-200 dark:ring-rose-800/60",
+        border: "border-rose-200/80 dark:border-rose-900/50",
+      };
+    case "due-today":
+      return {
+        stripe: "bg-gradient-to-b from-amber-400 to-orange-500",
+        badge:
+          "bg-amber-100 text-amber-800 ring-1 ring-amber-200/80 dark:bg-amber-950/60 dark:text-amber-200 dark:ring-amber-900/50",
+        border: "border-amber-200/80 dark:border-amber-900/50",
+      };
+    case "on-track":
+      return {
+        stripe: "bg-gradient-to-b from-emerald-400 to-green-500",
+        badge:
+          "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/80 dark:bg-emerald-950/60 dark:text-emerald-200 dark:ring-emerald-900/50",
+        border: "border-emerald-200/70 dark:border-emerald-900/40",
+      };
+    default:
+      return {
+        stripe: "bg-gradient-to-b from-indigo-400 to-violet-500",
+        badge:
+          "bg-slate-100 text-slate-600 ring-1 ring-slate-200/80 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700/80",
+        border: "border-slate-200/80 dark:border-slate-800/80",
+      };
+  }
+};
+
+export const createEmptyTask = (
+  sortOrder = 0,
+  defaultDeadline?: string | null
+): StandupPlanTask => ({
   id: createTaskId(),
   text: "",
-  deadline: null,
+  deadline: defaultDeadline ?? null,
   done: false,
   carriedFrom: null,
   sortOrder,
@@ -314,4 +433,85 @@ export const isTaskDueToday = (task: StandupPlanTask, referenceDate: Date | stri
   if (!deadlineDate || !reference) return false;
 
   return toDateKey(deadlineDate) === toDateKey(reference);
+};
+
+export type StandupFollowUpTask = {
+  id: string;
+  text: string;
+  deadline: string;
+  firstSeen: string;
+  lastSeen: string;
+  carriedFrom: string | null;
+  daysOverdue: number;
+  durationDays: number;
+};
+
+type FollowUpEntryLike = StandupEntryLike & {
+  userId: string;
+};
+
+export const collectFollowUpTasks = (
+  entries: FollowUpEntryLike[],
+  referenceDate: Date | string
+): Map<string, StandupFollowUpTask[]> => {
+  const referenceKey = toDateKey(referenceDate);
+  const byUser = new Map<string, Map<string, StandupFollowUpTask>>();
+
+  const sorted = [...entries].sort((left, right) =>
+    toDateKey(left.date).localeCompare(toDateKey(right.date))
+  );
+
+  for (const entry of sorted) {
+    const entryDateKey = toDateKey(entry.date);
+    if (!entryDateKey || entryDateKey > referenceKey) continue;
+
+    const tasks = parseStructuredTodayTasks(entry.todayTasks);
+    if (!byUser.has(entry.userId)) {
+      byUser.set(entry.userId, new Map());
+    }
+    const userTasks = byUser.get(entry.userId)!;
+
+    for (const task of tasks) {
+      if (!isStructuredTask(task) || !task.deadline) {
+        if (task.done) userTasks.delete(task.id);
+        continue;
+      }
+
+      if (task.done) {
+        userTasks.delete(task.id);
+        continue;
+      }
+
+      const existing = userTasks.get(task.id);
+      userTasks.set(task.id, {
+        id: task.id,
+        text: task.text,
+        deadline: task.deadline,
+        firstSeen: existing?.firstSeen ?? task.carriedFrom ?? entryDateKey,
+        lastSeen: entryDateKey,
+        carriedFrom: task.carriedFrom,
+        daysOverdue: 0,
+        durationDays: 0,
+      });
+    }
+  }
+
+  const result = new Map<string, StandupFollowUpTask[]>();
+
+  for (const [userId, taskMap] of byUser.entries()) {
+    const overdue = Array.from(taskMap.values())
+      .map((task) => ({
+        ...task,
+        daysOverdue: Math.max(0, daysBetweenKeys(task.deadline, referenceKey)),
+        durationDays: Math.max(1, daysBetweenKeys(task.firstSeen, referenceKey) + 1),
+      }))
+      .filter((task) => task.daysOverdue > 0)
+      .sort((left, right) => right.daysOverdue - left.daysOverdue);
+
+    if (overdue.length) {
+      result.set(userId, overdue);
+    }
+  }
+
+  return result;
 };
