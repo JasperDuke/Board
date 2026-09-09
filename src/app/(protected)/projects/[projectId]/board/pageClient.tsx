@@ -273,12 +273,9 @@ export default function BoardPageClient({ projectId, projectRole }: BoardPageCli
         <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">You don’t have access to this project.</h1>
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Ask a project admin to invite you to this project.</p>
-          <Link
-            href={routes.myProjects()}
-            className="mt-4 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-          >
-            Back to My Projects
-          </Link>
+          <Button asChild className="mt-4">
+            <Link href={routes.myProjects()}>Back to My Projects</Link>
+          </Button>
         </div>
       </div>
     );

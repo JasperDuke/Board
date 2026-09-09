@@ -17,6 +17,7 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 
 import BacklogTable, { type BacklogTableIssue } from "@/components/issues/BacklogTable";
+import { Button } from "@/components/ui/Button";
 import BacklogFilterBar from "@/components/issues/BacklogFilterBar";
 import {
   BacklogFilters,
@@ -821,12 +822,9 @@ export default function BacklogPageClient({
           <p className="mt-2 text-slate-600">
             Ask a project admin to invite you to this project.
           </p>
-          <Link
-            href={routes.myProjects()}
-            className="mt-4 inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            Back to My Projects
-          </Link>
+          <Button asChild className="mt-4">
+            <Link href={routes.myProjects()}>Back to My Projects</Link>
+          </Button>
         </div>
       </main>
     );
@@ -939,14 +937,14 @@ export default function BacklogPageClient({
                         onChange={(event) => setAiOnly(event.target.checked)}
                       />
                     </label>
-                    <button
+                    <Button
                       type="button"
+                      size="sm"
                       onClick={handleAnalyze}
                       disabled={isAnalyzing}
-                      className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
                     >
                       {isAnalyzing ? "Starting..." : "AI Groom backlog"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
 

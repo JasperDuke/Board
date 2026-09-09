@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
+import { Button } from "@/components/ui/Button";
 import {
   createEmptyTask,
   formatDeadlineShort,
@@ -96,7 +97,7 @@ const SortableTaskRow = ({
         transition,
       }}
       className={`group relative rounded-xl border bg-white/90 dark:bg-slate-900/80 ${styles.border} ${
-        isDragging ? "z-10 shadow-lg ring-1 ring-indigo-300/70" : ""
+        isDragging ? "z-10 shadow-lg ring-1 ring-primary/30" : ""
       } ${task.done ? "opacity-70" : ""}`}
     >
       <div aria-hidden="true" className={`absolute inset-y-2 left-0 w-0.5 rounded-full ${styles.stripe}`} />
@@ -120,7 +121,7 @@ const SortableTaskRow = ({
           type="checkbox"
           checked={task.done}
           onChange={(event) => onUpdate({ ...task, done: event.target.checked })}
-          className="mt-2.5 h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          className="mt-2.5 h-3.5 w-3.5 shrink-0 rounded border-slate-300 text-primary focus:ring-primary/40"
           aria-label={`Mark "${task.text || "task"}" as done`}
         />
 
@@ -147,7 +148,7 @@ const SortableTaskRow = ({
                 deadline: event.target.value || null,
               })
             }
-            className={`h-8 w-[8.75rem] cursor-pointer rounded-lg border bg-slate-50 px-2 text-[12px] text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200/60 dark:bg-slate-800 dark:text-slate-200 dark:focus:ring-indigo-500/30 [&::-webkit-calendar-picker-indicator]:ml-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-70 ${styles.border}`}
+            className={`h-8 w-[8.75rem] cursor-pointer rounded-lg border bg-slate-50 px-2 text-[12px] text-slate-700 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:bg-slate-800 dark:text-slate-200 dark:focus:ring-primary/30 [&::-webkit-calendar-picker-indicator]:ml-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-70 ${styles.border}`}
             aria-label="Task deadline"
           />
         </label>
@@ -236,23 +237,20 @@ export default function StandupTaskEditor({
             Green on track · orange due today · red overdue
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleAddTask}
-          className="rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-110"
-        >
+        <Button type="button" size="xs" onClick={handleAddTask}>
           + Add task
-        </button>
+        </Button>
       </div>
 
       {tasks.length === 0 ? (
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={handleAddTask}
-          className="w-full rounded-xl border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500 hover:border-indigo-300 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-400"
+          className="h-auto w-full border-dashed py-6 text-sm font-normal text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
         >
           Add your first task for today
-        </button>
+        </Button>
       ) : (
         <DndContext
           sensors={sensors}

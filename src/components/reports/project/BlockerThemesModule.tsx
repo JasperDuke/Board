@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { Button } from "@/components/ui/Button";
 import type { BlockerTheme } from "@/lib/reports/dto";
 import {
   areReportFiltersEqual,
@@ -57,13 +58,9 @@ const ThemeCard = ({
       </div>
     </div>
 
-    <button
-      type="button"
-      className="mt-4 inline-flex items-center justify-center rounded-lg border border-primary bg-primary px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:ring-offset-slate-900"
-      onClick={() => onCreate(theme)}
-    >
+    <Button type="button" size="sm" className="mt-4" onClick={() => onCreate(theme)}>
       Create action item
-    </button>
+    </Button>
   </div>
 );
 

@@ -183,13 +183,9 @@ export default function GeneralTab({
 
           {isAdmin && (
             <div className="flex justify-end border-t border-slate-200 pt-4 dark:border-slate-700">
-              <button
-                type="submit"
-                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isSaving}
-              >
+              <Button type="submit" size="sm" disabled={isSaving}>
                 {isSaving ? "Saving..." : "Save changes"}
-              </button>
+              </Button>
             </div>
           )}
         </form>

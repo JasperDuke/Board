@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/Button";
 import { routes } from "@/lib/routes";
 
 export default function Error({
@@ -16,19 +17,12 @@ export default function Error({
           Please try again or contact the admin.
         </p>
         <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
-          <button
-            type="button"
-            onClick={reset}
-            className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-          >
+          <Button type="button" onClick={reset}>
             Try again
-          </button>
-          <a
-            href={routes.myProjects()}
-            className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-blue-700 ring-1 ring-inset ring-blue-200 transition hover:bg-blue-50"
-          >
-            Back to projects
-          </a>
+          </Button>
+          <Button asChild variant="secondary">
+            <a href={routes.myProjects()}>Back to projects</a>
+          </Button>
         </div>
       </div>
     </div>

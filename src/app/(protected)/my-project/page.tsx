@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { Button } from "@/components/ui/Button";
 import { routes } from "@/lib/routes";
 
 export default function LegacyMyProjectRedirectPage() {
@@ -11,12 +12,9 @@ export default function LegacyMyProjectRedirectPage() {
           Your projects live at <span className="font-semibold">My Projects</span>. Use the link below to head there.
         </p>
         <div className="pt-2">
-          <Link
-            href={routes.myProjects()}
-            className="inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary/90"
-          >
-            Go to My Projects
-          </Link>
+          <Button asChild>
+            <Link href={routes.myProjects()}>Go to My Projects</Link>
+          </Button>
         </div>
       </div>
     </main>

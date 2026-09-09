@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
+import { Button } from "@/components/ui/Button";
+
 type ProjectOption = {
   id: string;
   name: string;
@@ -154,13 +156,9 @@ export default function JiraImportPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-blue-300"
-              >
+              <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting ? "Importing..." : "Import"}
-              </button>
+              </Button>
               {error && (
                 <p className="text-sm text-red-600" role="alert">
                   {error}

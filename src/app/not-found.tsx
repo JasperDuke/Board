@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { Button } from "@/components/ui/Button";
 import { routes } from "@/lib/routes";
 
 export default function NotFound() {
@@ -16,12 +17,9 @@ export default function NotFound() {
           It may have been moved, deleted, or the project id is invalid.
         </p>
         <div className="mt-6 flex justify-center">
-          <Link
-            href={routes.myProjects()}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500"
-          >
-            Back to projects
-          </Link>
+          <Button asChild>
+            <Link href={routes.myProjects()}>Back to projects</Link>
+          </Button>
         </div>
       </div>
     </div>

@@ -461,7 +461,7 @@ export default function StandupPageClient({
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [queueSortMode, setQueueSortMode] = useState<
     "suggested" | "alphabetical" | "custom"
-  >("suggested");
+  >("custom");
   const [savedSequenceUserIds, setSavedSequenceUserIds] = useState<string[]>([]);
   const [customSequenceUserIds, setCustomSequenceUserIds] = useState<string[]>([]);
   const [draggedSequenceUserId, setDraggedSequenceUserId] = useState<string | null>(null);
@@ -634,10 +634,16 @@ export default function StandupPageClient({
     () => getStandupEntryStatus(todayEntry),
     [todayEntry]
   );
-  const upcomingQueue = useMemo(() => {
-    if (!orderedQueue.length) return [];
-    const startIndex = Math.min(queueIndex + 1, orderedQueue.length);
-    return orderedQueue.slice(startIndex, startIndex + 2);
+  const adjacentQueueMembers = useMemo(() => {
+    if (!orderedQueue.length || queueIndex < 0) {
+      return { previous: null, next: null };
+    }
+
+    return {
+      previous: queueIndex > 0 ? orderedQueue[queueIndex - 1] : null,
+      next:
+        queueIndex < orderedQueue.length - 1 ? orderedQueue[queueIndex + 1] : null,
+    };
   }, [orderedQueue, queueIndex]);
   const standupViewTopRef = useRef<HTMLDivElement | null>(null);
   const notesInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1973,26 +1979,10 @@ export default function StandupPageClient({
                 }
                 className="h-8 rounded-md border border-slate-200 bg-white px-2 text-[12px] text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
               >
+                <option value="custom">Custom</option>
                 <option value="suggested">Suggested</option>
                 <option value="alphabetical">A–Z</option>
-                <option value="custom">Custom</option>
               </select>
-              <button
-                type="button"
-                disabled={!orderedQueue.length || queueIndex <= 0}
-                onClick={() => moveQueueSelection(-1)}
-                className="h-8 px-2.5 text-[12px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-30 dark:hover:text-slate-100"
-              >
-                Prev
-              </button>
-              <button
-                type="button"
-                disabled={!orderedQueue.length || queueIndex >= orderedQueue.length - 1}
-                onClick={() => moveQueueSelection(1)}
-                className="h-8 bg-slate-900 px-3 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-30 dark:bg-slate-100 dark:text-slate-900"
-              >
-                Next
-              </button>
             </div>
           </div>
 
@@ -2061,11 +2051,11 @@ export default function StandupPageClient({
                       }}
                       className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition ${
                         isActive
-                          ? "border-blue-500 bg-blue-50 text-slate-900 shadow-sm dark:border-blue-400/80 dark:bg-blue-900/40 dark:text-slate-50"
-                          : "border-slate-200 bg-white text-slate-800 hover:border-blue-200 hover:bg-blue-50/70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-slate-800"
+                          ? "border-primary bg-primary/5 text-slate-900 shadow-sm dark:border-primary/80 dark:bg-primary/15 dark:text-slate-50"
+                          : "border-slate-200 bg-white text-slate-800 hover:border-primary/30 hover:bg-primary/5 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-primary/40 dark:hover:bg-primary/10"
                       } ${
                         isDragOverTarget && queueSortMode === "custom"
-                          ? "ring-2 ring-blue-300 dark:ring-blue-500/70"
+                          ? "ring-2 ring-primary/30 dark:ring-primary/50"
                           : ""
                       } ${
                         draggedSequenceUserId === member.user.id ? "opacity-70" : ""
@@ -2142,7 +2132,50 @@ export default function StandupPageClient({
             </div>
           )}
 
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_200px]">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_minmax(0,1fr)] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <button
+              type="button"
+              disabled={!adjacentQueueMembers.previous}
+              onClick={() => moveQueueSelection(-1)}
+              className="min-w-0 truncate text-right text-[13px] text-slate-500 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 dark:text-slate-400 dark:hover:text-slate-100"
+              title={adjacentQueueMembers.previous?.user.name ?? undefined}
+            >
+              {adjacentQueueMembers.previous?.user.name ??
+                adjacentQueueMembers.previous?.user.email ??
+                "—"}
+            </button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={!adjacentQueueMembers.previous}
+              onClick={() => moveQueueSelection(-1)}
+            >
+              Prev
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!adjacentQueueMembers.next}
+              onClick={() => moveQueueSelection(1)}
+            >
+              Next
+            </Button>
+            <button
+              type="button"
+              disabled={!adjacentQueueMembers.next}
+              onClick={() => moveQueueSelection(1)}
+              className="min-w-0 truncate text-left text-[13px] font-medium text-slate-700 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 dark:text-slate-200 dark:hover:text-slate-50"
+              title={adjacentQueueMembers.next?.user.name ?? undefined}
+            >
+              {adjacentQueueMembers.next?.user.name ??
+                adjacentQueueMembers.next?.user.email ??
+                "End of queue"}
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
             {[
               {
                 key: "yesterday",
@@ -2264,95 +2297,66 @@ export default function StandupPageClient({
                 </section>
               );
             })}
+            </div>
 
-            <aside className="space-y-4">
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                  Next
-                </p>
-                <div className="mt-2 space-y-2">
-                  {upcomingQueue.length === 0 ? (
-                    <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] text-slate-400 dark:border-slate-800 dark:bg-slate-800/60">
-                      End of queue.
-                    </p>
-                  ) : (
-                    upcomingQueue.map((member) => {
-                      const status = queueStatusByUserId.get(member.user.id) ?? "missing";
-                      return (
-                        <div
-                          key={member.id}
-                          className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200"
-                        >
-                          <span
-                            aria-hidden="true"
-                            className={`h-2 w-2 shrink-0 rounded-full ${
-                              status === "updated"
-                                ? "bg-emerald-500"
-                                : status === "partial"
-                                  ? "bg-amber-400"
-                                  : "bg-slate-300 dark:bg-slate-600"
-                            }`}
-                          />
-                          {member.user.name ?? member.user.email}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
+              Note
+            </p>
+            <textarea
+              ref={facilitatorNoteInputRef}
+              value={newFacilitatorNote}
+              onChange={(event) => setNewFacilitatorNote(event.target.value)}
+              rows={3}
+              placeholder="Private note"
+              className="mt-2 w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            />
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleCreateFacilitatorNote}
+              disabled={isSavingFacilitatorNote}
+              className="mt-2"
+            >
+              {isSavingFacilitatorNote ? "Saving..." : "Save"}
+            </Button>
 
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
-                  Note
-                </p>
-                <textarea
-                  ref={facilitatorNoteInputRef}
-                  value={newFacilitatorNote}
-                  onChange={(event) => setNewFacilitatorNote(event.target.value)}
-                  rows={3}
-                  placeholder="Private note"
-                  className="mt-2 w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-                <button
-                  type="button"
-                  onClick={handleCreateFacilitatorNote}
-                  disabled={isSavingFacilitatorNote}
-                  className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
-                >
-                  {isSavingFacilitatorNote ? "Saving..." : "Save"}
-                </button>
+            {facilitatorNotesError && (
+              <p className="mt-2 text-[11px] text-amber-600">{facilitatorNotesError}</p>
+            )}
 
-                {facilitatorNotesError && (
-                  <p className="mt-2 text-[11px] text-amber-600">{facilitatorNotesError}</p>
-                )}
-
-                <ul className="mt-3 space-y-2">
-                  {facilitatorNotes.map((note) => (
-                    <li key={note.id} className="text-[12px] leading-5 text-slate-500">
-                      <p className={note.resolved ? "line-through text-slate-400" : "text-slate-600 dark:text-slate-300"}>
-                        {note.text}
-                      </p>
-                      <div className="mt-0.5 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleResolved(note)}
-                          className="text-[11px] text-slate-400 hover:text-slate-700"
-                        >
-                          {note.resolved ? "Reopen" : "Resolve"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteFacilitatorNote(note.id)}
-                          className="text-[11px] text-slate-400 hover:text-rose-500"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </aside>
+            <ul className="mt-3 space-y-2">
+              {facilitatorNotes.map((note) => (
+                <li key={note.id} className="text-[12px] leading-5 text-slate-500">
+                  <p
+                    className={
+                      note.resolved
+                        ? "line-through text-slate-400"
+                        : "text-slate-600 dark:text-slate-300"
+                    }
+                  >
+                    {note.text}
+                  </p>
+                  <div className="mt-0.5 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleResolved(note)}
+                      className="text-[11px] text-slate-400 hover:text-slate-700"
+                    >
+                      {note.resolved ? "Reopen" : "Resolve"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteFacilitatorNote(note.id)}
+                      className="text-[11px] text-slate-400 hover:text-rose-500"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            </div>
           </div>
         </div>
       )}

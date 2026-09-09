@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 
 import MarkdownRenderer from "@/components/common/MarkdownRenderer";
+import { Button } from "@/components/ui/Button";
 
 type InlineMarkdownFieldProps = {
   value: string;
@@ -148,28 +149,29 @@ export default function InlineMarkdownField({
           {saveError && <p className="text-xs text-red-500">{saveError}</p>}
 
           <div className="flex flex-wrap items-center gap-2">
-            <button
+            <Button
               type="button"
+              size="sm"
               onMouseDown={() => {
                 actionRef.current = "save";
               }}
               onClick={() => void handleSave()}
               disabled={isSaving}
-              className="inline-flex items-center rounded-full bg-primary px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-60"
             >
               {isSaving ? "Saving..." : "Save"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onMouseDown={() => {
                 actionRef.current = "cancel";
               }}
               onClick={handleCancel}
               disabled={isSaving}
-              className="inline-flex items-center rounded-full border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-900"
             >
               Cancel
-            </button>
+            </Button>
             <span className="text-xs text-slate-500 dark:text-slate-400" title={formattingHint}>
               Formatting help
             </span>
