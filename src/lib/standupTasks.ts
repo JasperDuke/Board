@@ -98,22 +98,40 @@ export const parseLegacySummaryToday = (
   return tasks;
 };
 
+export const parseStructuredTodayTasks = (todayTasks: unknown): StandupPlanTask[] => {
+  if (!Array.isArray(todayTasks) || todayTasks.length === 0) return [];
+
+  return todayTasks
+    .map((task, index) => normalizeTask(task, { sortOrder: index }))
+    .filter((task): task is StandupPlanTask => Boolean(task))
+    .map((task, index) => ({ ...task, sortOrder: index }));
+};
+
 export const parseStoredTodayTasks = (
   todayTasks: unknown,
   summaryToday?: string | null,
   entryDate?: string | null
 ): StandupPlanTask[] => {
-  if (Array.isArray(todayTasks) && todayTasks.length > 0) {
-    const parsed = todayTasks
-      .map((task, index) => normalizeTask(task, { sortOrder: index }))
-      .filter((task): task is StandupPlanTask => Boolean(task));
-
-    if (parsed.length > 0) {
-      return parsed.map((task, index) => ({ ...task, sortOrder: index }));
-    }
-  }
+  const structured = parseStructuredTodayTasks(todayTasks);
+  if (structured.length > 0) return structured;
 
   return parseLegacySummaryToday(summaryToday, entryDate);
+};
+
+export const isStructuredTask = (task: StandupPlanTask) =>
+  !task.id.startsWith("legacy-");
+
+export const isCarryOverCandidate = (
+  task: StandupPlanTask,
+  targetDate: Date | string
+) => {
+  if (!isStructuredTask(task) || task.done || !task.deadline) return false;
+
+  const deadlineDate = parseDateOnly(task.deadline);
+  const reference = parseDateOnly(targetDate);
+  if (!deadlineDate || !reference) return false;
+
+  return toDateKey(deadlineDate) < toDateKey(reference);
 };
 
 export const tasksToSummaryToday = (tasks: StandupPlanTask[]): string => {
@@ -157,15 +175,13 @@ export const mergeOpenTasksForDate = (
     const entryDateKey = toDateKey(entry.date);
     if (!entryDateKey || entryDateKey >= targetDateKey) continue;
 
-    const entryTasks = parseStoredTodayTasks(
-      entry.todayTasks,
-      entry.summaryToday,
-      entryDateKey
-    );
+    const entryTasks = parseStructuredTodayTasks(entry.todayTasks);
 
     for (const task of entryTasks) {
-      if (task.done) {
-        openTasks.delete(task.id);
+      if (!isCarryOverCandidate(task, targetDate)) {
+        if (task.done) {
+          openTasks.delete(task.id);
+        }
         continue;
       }
 

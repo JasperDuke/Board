@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
-import { comparePassword, hashPassword, signAuthToken } from "../../../../lib/auth";
+import {
+  AUTH_COOKIE_NAME,
+  AUTH_COOKIE_OPTIONS,
+  comparePassword,
+  hashPassword,
+  signAuthToken,
+} from "../../../../lib/auth";
 import prisma from "../../../../lib/db";
 import {
   IssuePriority,
@@ -124,13 +130,7 @@ export async function POST(request: Request) {
       role: user.role,
     });
 
-    response.cookies.set("auth_token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
+    response.cookies.set(AUTH_COOKIE_NAME, token, AUTH_COOKIE_OPTIONS);
 
     return response;
   } catch (error) {

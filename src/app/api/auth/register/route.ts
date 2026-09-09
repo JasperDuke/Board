@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 
 import { Role, WorkspaceMemberRole } from "../../../../lib/prismaEnums";
 
-import { hashPassword, signAuthToken } from "../../../../lib/auth";
+import {
+  AUTH_COOKIE_NAME,
+  AUTH_COOKIE_OPTIONS,
+  hashPassword,
+  signAuthToken,
+} from "../../../../lib/auth";
 import prisma from "../../../../lib/db";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -147,13 +152,7 @@ export async function POST(request: Request) {
       email: user.email,
     });
 
-    response.cookies.set("auth_token", authToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
+    response.cookies.set(AUTH_COOKIE_NAME, authToken, AUTH_COOKIE_OPTIONS);
 
     return response;
   } catch (error) {

@@ -26,6 +26,29 @@ if (!JWT_SECRET) {
   throw new Error("JWT_SECRET is not set. Please define it in your environment.");
 }
 
+const AUTH_SESSION_MAX_AGE_DAYS = Number.parseInt(
+  process.env.AUTH_SESSION_MAX_AGE_DAYS ?? "30",
+  10
+);
+
+export const AUTH_SESSION_MAX_AGE_SECONDS =
+  (Number.isFinite(AUTH_SESSION_MAX_AGE_DAYS) && AUTH_SESSION_MAX_AGE_DAYS > 0
+    ? AUTH_SESSION_MAX_AGE_DAYS
+    : 30) *
+  24 *
+  60 *
+  60;
+
+export const AUTH_COOKIE_NAME = "auth_token";
+
+export const AUTH_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: process.env.NODE_ENV === "production",
+  path: "/",
+  maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+};
+
 export const hashPassword = async (plain: string): Promise<string> => {
   return bcrypt.hash(plain, 10);
 };
@@ -38,7 +61,10 @@ export const comparePassword = async (
 };
 
 export const signAuthToken = (payload: { userId: string }): string => {
-  return jwt.sign(payload, JWT_SECRET, { algorithm: "HS256" });
+  return jwt.sign(payload, JWT_SECRET, {
+    algorithm: "HS256",
+    expiresIn: AUTH_SESSION_MAX_AGE_SECONDS,
+  });
 };
 
 export const verifyAuthToken = (
