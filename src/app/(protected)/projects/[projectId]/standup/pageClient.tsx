@@ -44,6 +44,8 @@ type StandupEntry = {
   summaryToday: string | null;
   todayTasks?: StandupPlanTask[];
   displayTasks?: StandupPlanTask[];
+  yesterdayTasks?: StandupPlanTask[];
+  yesterdayDate?: string | null;
   progressSinceYesterday: string | null;
   blockers: string | null;
   dependencies: string | null;
@@ -481,7 +483,7 @@ export default function StandupPageClient({
   });
   const [todayTasks, setTodayTasks] = useState<StandupPlanTask[]>([]);
   const [yesterdayTasks, setYesterdayTasks] = useState<StandupPlanTask[]>([]);
-  const [yesterdayDate, setYesterdayDate] = useState<string | null>(null);
+  const [yesterdayReviewDate, setYesterdayReviewDate] = useState<string | null>(null);
   const [selectedIssues, setSelectedIssues] = useState<StandupIssue[]>([]);
   const [issueQuery, setIssueQuery] = useState("");
   const [issueOptions, setIssueOptions] = useState<StandupIssue[]>([]);
@@ -676,7 +678,7 @@ export default function StandupPageClient({
 
         setCurrentEntry(entry);
         setYesterdayTasks(loadedYesterdayTasks);
-        setYesterdayDate(loadedYesterdayDate);
+        setYesterdayReviewDate(loadedYesterdayDate);
         setTodayTasks(
           loadedTasks.length > 0
             ? loadedTasks
@@ -1148,11 +1150,11 @@ export default function StandupPageClient({
         syncTodayTasksWithYesterday(
           nextYesterdayTasks,
           currentTodayTasks,
-          yesterdayDate
+          yesterdayReviewDate
         )
       );
     },
-    [yesterdayDate]
+    [yesterdayReviewDate]
   );
 
   const handleDraftReady = useCallback(
@@ -1208,7 +1210,7 @@ export default function StandupPageClient({
         summaryToday: formState.summaryToday.trim() || null,
         todayTasks: normalizedTasks,
         yesterdayTasks: hasStructuredYesterdayTasks ? normalizedYesterdayTasks : undefined,
-        yesterdayDate: hasStructuredYesterdayTasks ? yesterdayDate : undefined,
+        yesterdayDate: hasStructuredYesterdayTasks ? yesterdayReviewDate : undefined,
         progressSinceYesterday: hasStructuredYesterdayTasks
           ? null
           : formState.progressSinceYesterday.trim() || null,
@@ -1222,7 +1224,7 @@ export default function StandupPageClient({
       const saved = await upsertMyStandupEntry(projectId, payload);
       setCurrentEntry(saved);
       setYesterdayTasks(saved.yesterdayTasks ?? yesterdayTasks);
-      setYesterdayDate(saved.yesterdayDate ?? yesterdayDate);
+      setYesterdayReviewDate(saved.yesterdayDate ?? yesterdayReviewDate);
       setTodayTasks(
         saved.todayTasks?.length
           ? saved.todayTasks
@@ -1894,7 +1896,7 @@ export default function StandupPageClient({
                       });
                       setTodayTasks([createEmptyTask(0, mySelectedDate)]);
                       setYesterdayTasks([]);
-                      setYesterdayDate(null);
+                      setYesterdayReviewDate(null);
                       setSelectedIssues([]);
                       setSelectedResearch([]);
                     }}
