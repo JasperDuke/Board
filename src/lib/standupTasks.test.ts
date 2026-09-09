@@ -8,6 +8,7 @@ import {
   mergeOpenTasksForDate,
   parseLegacySummaryToday,
   parseStoredTodayTasks,
+  summarizeTaskCompletion,
   syncTodayTasksWithYesterday,
   tasksToSummaryToday,
 } from "@/lib/standupTasks";
@@ -294,5 +295,30 @@ describe("standupTasks", () => {
         "2026-09-09"
       )
     ).toBe(false);
+  });
+
+  it("summarizes structured task completion counts", () => {
+    expect(
+      summarizeTaskCompletion([
+        {
+          id: "1",
+          text: "Done task",
+          deadline: "2026-09-08",
+          done: true,
+          carriedFrom: null,
+          sortOrder: 0,
+        },
+        {
+          id: "2",
+          text: "Open task",
+          deadline: "2026-09-08",
+          done: false,
+          carriedFrom: null,
+          sortOrder: 1,
+        },
+      ])
+    ).toEqual({ done: 1, total: 2 });
+
+    expect(summarizeTaskCompletion(null)).toBeNull();
   });
 });

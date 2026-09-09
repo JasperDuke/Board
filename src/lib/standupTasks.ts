@@ -317,11 +317,18 @@ export const syncTodayTasksWithYesterday = (
   }));
 };
 
-export const tasksToProgressSinceYesterday = (tasks: StandupPlanTask[]) => {
-  const completed = tasks.filter((task) => task.done && task.text.trim());
-  if (!completed.length) return null;
+export const summarizeTaskCompletion = (
+  tasks?: StandupPlanTask[] | null
+): { done: number; total: number } | null => {
+  if (!tasks?.length) return null;
 
-  return completed.map((task) => `- [x] ${task.text.trim()}`).join("\n");
+  const activeTasks = tasks.filter((task) => task.text.trim());
+  if (!activeTasks.length) return null;
+
+  return {
+    done: activeTasks.filter((task) => task.done).length,
+    total: activeTasks.length,
+  };
 };
 
 export const normalizeIncomingTasks = (input: unknown): StandupPlanTask[] => {

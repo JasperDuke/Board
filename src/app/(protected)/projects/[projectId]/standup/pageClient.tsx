@@ -17,6 +17,7 @@ import {
   createEmptyTask,
   hasPlanContent,
   parseLegacySummaryToday,
+  summarizeTaskCompletion,
   syncTodayTasksWithYesterday,
   type StandupPlanTask,
 } from "@/lib/standupTasks";
@@ -2002,69 +2003,127 @@ export default function StandupPageClient({
             <p className="text-sm text-rose-600 dark:text-rose-300">{standupViewError}</p>
           )}
 
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {isLoadingMembers && orderedQueue.length === 0 ? (
-              <p className="text-xs text-slate-400">Loading members...</p>
-            ) : (
-              orderedQueue.map((member) => {
-                const isActive = member.user.id === selectedUserId;
-                const status = queueStatusByUserId.get(member.user.id) ?? "missing";
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => setSelectedUserId(member.user.id)}
-                    draggable={queueSortMode === "custom"}
-                    onDragStart={(event) => {
-                      if (queueSortMode !== "custom") return;
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", member.user.id);
-                      setDraggedSequenceUserId(member.user.id);
-                      setDragOverSequenceUserId(member.user.id);
-                      setSelectedUserId(member.user.id);
-                    }}
-                    onDragOver={(event) => {
-                      if (queueSortMode !== "custom" || !draggedSequenceUserId) return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = "move";
-                      if (dragOverSequenceUserId !== member.user.id) {
+          <div className="space-y-3">
+            <div className="hidden grid-cols-2 gap-3 md:grid lg:grid-cols-3 xl:grid-cols-4">
+              {isLoadingMembers && orderedQueue.length === 0 ? (
+                <div className="col-span-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300">
+                  Loading members...
+                </div>
+              ) : (
+                orderedQueue.map((member) => {
+                  const isActive = member.user.id === selectedUserId;
+                  const isDragOverTarget = dragOverSequenceUserId === member.user.id;
+                  const initials = getInitials(member.user.name ?? member.user.email);
+                  const status = queueStatusByUserId.get(member.user.id) ?? "missing";
+                  const statusDot =
+                    status === "updated"
+                      ? "bg-emerald-500"
+                      : status === "partial"
+                        ? "bg-amber-400"
+                        : "bg-slate-300 dark:bg-slate-600";
+
+                  return (
+                    <button
+                      key={member.id}
+                      type="button"
+                      onClick={() => setSelectedUserId(member.user.id)}
+                      draggable={queueSortMode === "custom"}
+                      onDragStart={(event) => {
+                        if (queueSortMode !== "custom") return;
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", member.user.id);
+                        setDraggedSequenceUserId(member.user.id);
                         setDragOverSequenceUserId(member.user.id);
-                      }
-                    }}
-                    onDrop={(event) => {
-                      if (queueSortMode !== "custom") return;
-                      event.preventDefault();
-                      const sourceUserId =
-                        event.dataTransfer.getData("text/plain") || draggedSequenceUserId;
-                      if (!sourceUserId) return;
-                      moveCustomSequenceUser(sourceUserId, member.user.id);
-                      setSelectedUserId(sourceUserId);
-                      setDraggedSequenceUserId(null);
-                      setDragOverSequenceUserId(null);
-                    }}
-                    onDragEnd={() => {
-                      setDraggedSequenceUserId(null);
-                      setDragOverSequenceUserId(null);
-                    }}
-                    className={`shrink-0 border-b-2 px-2 py-1 text-[12px] transition ${
-                      isActive
-                        ? "border-slate-900 font-medium text-slate-900 dark:border-slate-100 dark:text-slate-50"
-                        : "border-transparent text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    <span
-                      className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
-                        status === "updated"
-                          ? "bg-emerald-500"
-                          : status === "partial"
-                            ? "bg-amber-400"
-                            : "bg-slate-300"
+                        setSelectedUserId(member.user.id);
+                      }}
+                      onDragOver={(event) => {
+                        if (queueSortMode !== "custom" || !draggedSequenceUserId) return;
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        if (dragOverSequenceUserId !== member.user.id) {
+                          setDragOverSequenceUserId(member.user.id);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        if (queueSortMode !== "custom") return;
+                        event.preventDefault();
+                        const sourceUserId =
+                          event.dataTransfer.getData("text/plain") || draggedSequenceUserId;
+                        if (!sourceUserId) return;
+                        moveCustomSequenceUser(sourceUserId, member.user.id);
+                        setSelectedUserId(sourceUserId);
+                        setDraggedSequenceUserId(null);
+                        setDragOverSequenceUserId(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedSequenceUserId(null);
+                        setDragOverSequenceUserId(null);
+                      }}
+                      className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition ${
+                        isActive
+                          ? "border-blue-500 bg-blue-50 text-slate-900 shadow-sm dark:border-blue-400/80 dark:bg-blue-900/40 dark:text-slate-50"
+                          : "border-slate-200 bg-white text-slate-800 hover:border-blue-200 hover:bg-blue-50/70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-blue-500/50 dark:hover:bg-slate-800"
+                      } ${
+                        isDragOverTarget && queueSortMode === "custom"
+                          ? "ring-2 ring-blue-300 dark:ring-blue-500/70"
+                          : ""
+                      } ${
+                        draggedSequenceUserId === member.user.id ? "opacity-70" : ""
                       }`}
-                    />
+                    >
+                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
+                        {member.user.avatarUrl ? (
+                          <img
+                            src={member.user.avatarUrl}
+                            alt={member.user.name ?? "Member avatar"}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          initials || "?"
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-50">
+                          {member.user.name ?? member.user.email}
+                        </p>
+                        <p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          {member.role}
+                        </p>
+                      </div>
+                      <span
+                        aria-hidden="true"
+                        className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot}`}
+                      />
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="space-y-2 md:hidden">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Select user
+              </label>
+              <select
+                value={selectedUserId ?? ""}
+                onChange={(event) => setSelectedUserId(event.target.value || null)}
+                className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
+              >
+                <option value="" disabled>
+                  {isLoadingMembers ? "Loading members..." : "Choose a user"}
+                </option>
+                {orderedQueue.map((member) => (
+                  <option key={member.id} value={member.user.id}>
                     {member.user.name ?? member.user.email}
-                  </button>
-                );
-              })
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {queueSortMode === "custom" && orderedQueue.length > 1 && (
+              <p className="hidden text-xs text-slate-500 dark:text-slate-400 md:block">
+                Drag teammate cards to reorder the standup sequence, then save order.
+              </p>
             )}
           </div>
 
@@ -2102,109 +2161,147 @@ export default function StandupPageClient({
             ].map((section) => {
               const isTodaySection = section.key === "today";
               const highlightMissing = isTodaySection && todayStatus === "partial";
+              const yesterdayCompletion = !isTodaySection
+                ? summarizeTaskCompletion(section.entries[0]?.todayTasks)
+                : null;
 
               return (
-                <section key={section.key} className="min-w-0">
-                  <div className="mb-4 flex items-baseline justify-between gap-3">
+                <section
+                  key={section.key}
+                  className="min-w-0 rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                >
+                  <div className="flex items-baseline justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/70">
                     <div>
                       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
                         {section.label}
                       </p>
-                      <p className="mt-0.5 text-sm font-medium text-slate-900 dark:text-slate-50">
+                      <p className="mt-0.5 text-sm font-semibold text-slate-900 dark:text-slate-50">
                         {section.dateLabel}
                       </p>
                     </div>
-                    {isTodaySection && todayStatus === "partial" && (
-                      <span className="text-[11px] font-medium text-amber-600">Partial</span>
-                    )}
-                    {isTodaySection && todayStatus === "updated" && (
-                      <span className="text-[11px] font-medium text-emerald-600">Ready</span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {yesterdayCompletion && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums ${
+                            yesterdayCompletion.done === yesterdayCompletion.total
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200"
+                              : yesterdayCompletion.done > 0
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+                                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                          }`}
+                          title="Tasks finished yesterday"
+                        >
+                          {yesterdayCompletion.done}/{yesterdayCompletion.total}
+                        </span>
+                      )}
+                      {isTodaySection && todayStatus === "partial" && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-200">
+                          Partial
+                        </span>
+                      )}
+                      {isTodaySection && todayStatus === "updated" && (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-200">
+                          Ready
+                        </span>
+                      )}
+                    </div>
                   </div>
 
-                  {isLoadingStandupView ? (
-                    <p className="text-sm text-slate-400">Loading...</p>
-                  ) : section.entries.length === 0 ? (
-                    <p className="text-sm text-slate-400">{section.empty}</p>
-                  ) : (
-                    section.entries.map((entry) => {
-                      const blockers = entry.blockers?.trim();
-                      const dependencies = entry.dependencies?.trim();
-                      const progress = entry.progressSinceYesterday?.trim();
-                      const hasLinked = entry.issues.length + entry.research.length > 0;
+                  <div className="p-4">
+                    {isLoadingStandupView ? (
+                      <p className="text-sm text-slate-400">Loading...</p>
+                    ) : section.entries.length === 0 ? (
+                      <p className="text-sm text-slate-400">{section.empty}</p>
+                    ) : (
+                      section.entries.map((entry) => {
+                        const blockers = entry.blockers?.trim();
+                        const dependencies = entry.dependencies?.trim();
+                        const hasLinked = entry.issues.length + entry.research.length > 0;
 
-                      return (
-                        <div key={entry.id} className="space-y-5">
-                          <StandupTaskDisplay
-                            tasks={entry.displayTasks ?? entry.todayTasks}
-                            summaryToday={entry.summaryToday}
-                            entryDate={entry.date}
-                            referenceDate={
-                              isTodaySection
-                                ? standupDateInput
-                                : toDateInput(yesterdayDate)
-                            }
-                            highlightMissing={
-                              highlightMissing && todayMissingSections.today
-                            }
-                            variant="presentation"
-                          />
+                        return (
+                          <div key={entry.id} className="space-y-4">
+                            <StandupTaskDisplay
+                              tasks={entry.displayTasks ?? entry.todayTasks}
+                              summaryToday={entry.summaryToday}
+                              entryDate={entry.date}
+                              referenceDate={
+                                isTodaySection
+                                  ? standupDateInput
+                                  : toDateInput(yesterdayDate)
+                              }
+                              highlightMissing={
+                                highlightMissing && todayMissingSections.today
+                              }
+                              variant="presentation"
+                            />
 
-                          {isTodaySection && progress && progress !== "—" && (
-                            <p className="text-[12px] leading-5 text-slate-500">
-                              <span className="font-medium text-slate-400">Finished · </span>
-                              {progress}
-                            </p>
-                          )}
+                            {(blockers && blockers !== "—") ||
+                            (dependencies && dependencies !== "—") ? (
+                              <div className="space-y-2 text-[12px] leading-5 text-slate-500">
+                                {blockers && blockers !== "—" && (
+                                  <p>
+                                    <span className="font-medium text-rose-500">Blocked · </span>
+                                    {blockers}
+                                  </p>
+                                )}
+                                {dependencies && dependencies !== "—" && (
+                                  <p>
+                                    <span className="font-medium text-slate-400">Needs · </span>
+                                    {dependencies}
+                                  </p>
+                                )}
+                              </div>
+                            ) : null}
 
-                          {(blockers && blockers !== "—") ||
-                          (dependencies && dependencies !== "—") ? (
-                            <div className="space-y-1 text-[12px] leading-5 text-slate-500">
-                              {blockers && blockers !== "—" && (
-                                <p>
-                                  <span className="font-medium text-rose-500">Blocked · </span>
-                                  {blockers}
-                                </p>
-                              )}
-                              {dependencies && dependencies !== "—" && (
-                                <p>
-                                  <span className="font-medium text-slate-400">Needs · </span>
-                                  {dependencies}
-                                </p>
-                              )}
-                            </div>
-                          ) : null}
-
-                          {hasLinked && (
-                            <div className="pt-1">{renderLinkedWork(entry)}</div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
+                            {hasLinked && (
+                              <div className="pt-1">{renderLinkedWork(entry)}</div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </section>
               );
             })}
 
-            <aside className="space-y-6 border-t border-slate-100 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 dark:border-slate-800">
-              <div>
+            <aside className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
                   Next
                 </p>
-                <div className="mt-2 space-y-1">
+                <div className="mt-2 space-y-2">
                   {upcomingQueue.length === 0 ? (
-                    <p className="text-[12px] text-slate-400">End of queue.</p>
+                    <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] text-slate-400 dark:border-slate-800 dark:bg-slate-800/60">
+                      End of queue.
+                    </p>
                   ) : (
-                    upcomingQueue.map((member) => (
-                      <p key={member.id} className="text-[13px] text-slate-600 dark:text-slate-300">
-                        {member.user.name ?? member.user.email}
-                      </p>
-                    ))
+                    upcomingQueue.map((member) => {
+                      const status = queueStatusByUserId.get(member.user.id) ?? "missing";
+                      return (
+                        <div
+                          key={member.id}
+                          className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`h-2 w-2 shrink-0 rounded-full ${
+                              status === "updated"
+                                ? "bg-emerald-500"
+                                : status === "partial"
+                                  ? "bg-amber-400"
+                                  : "bg-slate-300 dark:bg-slate-600"
+                            }`}
+                          />
+                          {member.user.name ?? member.user.email}
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
 
-              <div>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">
                   Note
                 </p>
@@ -2212,15 +2309,15 @@ export default function StandupPageClient({
                   ref={facilitatorNoteInputRef}
                   value={newFacilitatorNote}
                   onChange={(event) => setNewFacilitatorNote(event.target.value)}
-                  rows={2}
+                  rows={3}
                   placeholder="Private note"
-                  className="mt-2 w-full resize-none border-0 border-b border-slate-200 bg-transparent px-0 py-1 text-[13px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 dark:border-slate-700 dark:text-slate-100"
+                  className="mt-2 w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-[13px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
                 <button
                   type="button"
                   onClick={handleCreateFacilitatorNote}
                   disabled={isSavingFacilitatorNote}
-                  className="mt-2 text-[12px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40 dark:hover:text-slate-100"
+                  className="mt-2 rounded-md bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-slate-800 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
                 >
                   {isSavingFacilitatorNote ? "Saving..." : "Save"}
                 </button>

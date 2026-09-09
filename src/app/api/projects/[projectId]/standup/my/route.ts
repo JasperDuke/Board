@@ -22,7 +22,6 @@ import {
   hasPlanContent,
   mergeOpenTasksForDate,
   normalizeIncomingTasks,
-  tasksToProgressSinceYesterday,
   tasksToSummaryToday,
 } from "@/lib/standupTasks";
 import { parseDateOnly, parseTimeOnDate } from "@/lib/standupWindow";
@@ -336,9 +335,11 @@ const upsertEntry = async (
       ? tasksToSummaryToday(normalizedTasks)
       : todayPlan ?? summaryToday;
   const yesterdayDate = parseDateOnly(yesterdayDateInput ?? null);
-  const generatedProgress = tasksToProgressSinceYesterday(normalizedYesterdayTasks);
-  const normalizedProgress =
-    generatedProgress ?? yesterdayWork ?? progressSinceYesterday;
+  const hasStructuredYesterdayReview =
+    Boolean(yesterdayDate) && normalizedYesterdayTasks.length > 0;
+  const normalizedProgress = hasStructuredYesterdayReview
+    ? null
+    : yesterdayWork ?? progressSinceYesterday;
   const normalizedBlockers = blockersInput ?? null;
   const storedTodayTasks = normalizedTasks.length > 0 ? normalizedTasks : null;
   const isComplete = computeCompletion(normalizedSummaryToday, [
@@ -359,7 +360,7 @@ const upsertEntry = async (
         update: {
           todayTasks: normalizedYesterdayTasks,
           summaryToday: tasksToSummaryToday(normalizedYesterdayTasks),
-          progressSinceYesterday: generatedProgress,
+          progressSinceYesterday: null,
         },
         create: {
           projectId,
@@ -367,7 +368,7 @@ const upsertEntry = async (
           date: yesterdayDate,
           todayTasks: normalizedYesterdayTasks,
           summaryToday: tasksToSummaryToday(normalizedYesterdayTasks),
-          progressSinceYesterday: generatedProgress,
+          progressSinceYesterday: null,
           isComplete: false,
         },
       });
