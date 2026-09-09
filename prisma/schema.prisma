@@ -593,6 +593,7 @@ model DailyStandupEntry {
   userId                 String
   date                   DateTime @db.Date
   summaryToday           String?
+  todayTasks             Json?
   progressSinceYesterday String?
   blockers               String?
   dependencies           String?

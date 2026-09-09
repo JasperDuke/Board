@@ -8,7 +8,17 @@ import {
   PROJECT_VIEWER_ROLES,
 } from "@/lib/permissions";
 import { resolveProjectId, type ProjectParams } from "@/lib/params";
+import { Prisma } from "@prisma/client";
+
 import { Role } from "@/lib/prismaEnums";
+import { getPreviousStandupEntries } from "@/lib/standupTaskQueries";
+import {
+  buildEditableTasksForDate,
+  hasPlanContent,
+  mergeOpenTasksForDate,
+  normalizeIncomingTasks,
+  tasksToSummaryToday,
+} from "@/lib/standupTasks";
 import { parseDateOnly, parseTimeOnDate } from "@/lib/standupWindow";
 
 const standupInclude = {
@@ -22,9 +32,11 @@ const standupInclude = {
 
 const computeCompletion = (
   summaryToday?: string | null,
-  linkedWorkIds?: (string | undefined)[]
+  linkedWorkIds?: (string | undefined)[],
+  todayTasks?: ReturnType<typeof normalizeIncomingTasks> | null
 ) => {
-  return Boolean(summaryToday && summaryToday.trim()) && Boolean(linkedWorkIds?.length);
+  const hasPlan = hasPlanContent(todayTasks ?? [], summaryToday);
+  return hasPlan && Boolean(linkedWorkIds?.length);
 };
 
 const normalizeIssueIds = (issueIds: unknown): string[] => {
@@ -117,7 +129,24 @@ export async function GET(
     include: standupInclude,
   });
 
-  return NextResponse.json(entry);
+  const previousEntries = await getPreviousStandupEntries(projectId, targetUserId, date);
+  const editableTasks = buildEditableTasksForDate(previousEntries, entry, date);
+  const displayTasks = entry
+    ? mergeOpenTasksForDate(previousEntries, entry, date)
+    : editableTasks;
+
+  if (!entry) {
+    return NextResponse.json({
+      todayTasks: editableTasks,
+      displayTasks,
+    });
+  }
+
+  return NextResponse.json({
+    ...entry,
+    todayTasks: editableTasks,
+    displayTasks,
+  });
 }
 
 export async function POST(
@@ -176,6 +205,7 @@ const upsertEntry = async (
     notes,
     issueIds: issueIdsInput,
     researchIds: researchIdsInput,
+    todayTasks: todayTasksInput,
   } = body ?? {};
 
   const date = parseDateOnly(dateInput ?? new Date());
@@ -266,13 +296,18 @@ const upsertEntry = async (
 
   const validIssueIds = validIssues.map((issue) => issue.id);
   const validResearchIds = validResearchItems.map((researchItem) => researchItem.id);
-  const normalizedSummaryToday = todayPlan ?? summaryToday;
+  const normalizedTasks = normalizeIncomingTasks(todayTasksInput);
+  const normalizedSummaryToday =
+    normalizedTasks.length > 0
+      ? tasksToSummaryToday(normalizedTasks)
+      : todayPlan ?? summaryToday;
   const normalizedProgress = yesterdayWork ?? progressSinceYesterday;
   const normalizedBlockers = blockersInput ?? null;
+  const storedTodayTasks = normalizedTasks.length > 0 ? normalizedTasks : null;
   const isComplete = computeCompletion(normalizedSummaryToday, [
     ...validIssueIds,
     ...validResearchIds,
-  ]);
+  ], storedTodayTasks);
 
   const entry = await prisma.$transaction(async (tx) => {
     const upserted = await tx.dailyStandupEntry.upsert({
@@ -285,6 +320,7 @@ const upsertEntry = async (
       },
       update: {
         summaryToday: normalizedSummaryToday ?? null,
+        todayTasks: storedTodayTasks ?? Prisma.DbNull,
         progressSinceYesterday: normalizedProgress ?? null,
         blockers: normalizedBlockers ?? null,
         dependencies: dependencies ?? null,
@@ -296,6 +332,7 @@ const upsertEntry = async (
         userId: targetUserId,
         date,
         summaryToday: normalizedSummaryToday ?? null,
+        todayTasks: storedTodayTasks ?? Prisma.DbNull,
         progressSinceYesterday: normalizedProgress ?? null,
         blockers: normalizedBlockers ?? null,
         dependencies: dependencies ?? null,
@@ -375,5 +412,20 @@ const upsertEntry = async (
     include: standupInclude,
   });
 
-  return NextResponse.json(result, { status: 200 });
+  if (!result) {
+    return NextResponse.json({ message: "Unable to load saved entry" }, { status: 500 });
+  }
+
+  const previousEntries = await getPreviousStandupEntries(projectId, targetUserId, date);
+  const editableTasks = buildEditableTasksForDate(previousEntries, result, date);
+  const displayTasks = mergeOpenTasksForDate(previousEntries, result, date);
+
+  return NextResponse.json(
+    {
+      ...result,
+      todayTasks: editableTasks,
+      displayTasks,
+    },
+    { status: 200 }
+  );
 };

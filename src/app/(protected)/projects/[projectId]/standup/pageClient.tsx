@@ -4,9 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 import AIStandupAssistant from "@/components/standup/AIStandupAssistant";
+import StandupTaskDisplay from "@/components/standup/StandupTaskDisplay";
+import StandupTaskEditor from "@/components/standup/StandupTaskEditor";
 import { Button } from "@/components/ui/Button";
 import MarkdownRenderer from "@/components/common/MarkdownRenderer";
 import { ProjectRole } from "@/lib/roles";
+import {
+  createEmptyTask,
+  hasPlanContent,
+  parseLegacySummaryToday,
+  type StandupPlanTask,
+} from "@/lib/standupTasks";
 import { getPreviousStandupDate } from "@/lib/standupWindow";
 
 type StandupIssue = {
@@ -29,6 +37,8 @@ type StandupEntry = {
   id: string;
   date: string;
   summaryToday: string | null;
+  todayTasks?: StandupPlanTask[];
+  displayTasks?: StandupPlanTask[];
   progressSinceYesterday: string | null;
   blockers: string | null;
   dependencies: string | null;
@@ -36,6 +46,11 @@ type StandupEntry = {
   isComplete: boolean;
   issues: { issue: StandupIssue }[];
   research: { researchItem: StandupResearch }[];
+};
+
+type StandupEntryResponse = StandupEntry | {
+  todayTasks?: StandupPlanTask[];
+  displayTasks?: StandupPlanTask[];
 };
 
 type StandupEntryWithUser = StandupEntry & {
@@ -129,9 +144,11 @@ const getMissingStandupSections = (entry?: StandupEntry | StandupEntryWithUser |
     };
   }
 
+  const planTasks = entry.displayTasks ?? entry.todayTasks ?? [];
+
   return {
     progress: !entry.progressSinceYesterday?.trim(),
-    today: !entry.summaryToday?.trim(),
+    today: !hasPlanContent(planTasks, entry.summaryToday),
     blockers: false,
     dependencies: false,
     linkedWork: entry.issues.length + entry.research.length === 0,
@@ -168,7 +185,7 @@ const getMyStandupEntryForDate = async (
     throw new Error(data?.message ?? "Unable to load standup entry");
   }
 
-  return (await response.json()) as StandupEntry | null;
+  return (await response.json()) as StandupEntryResponse | null;
 };
 
 const upsertMyStandupEntry = async (
@@ -177,6 +194,7 @@ const upsertMyStandupEntry = async (
     date: string;
     userId?: string;
     summaryToday: string | null;
+    todayTasks?: StandupPlanTask[];
     progressSinceYesterday: string | null;
     blockers: string | null;
     dependencies: string | null;
@@ -452,6 +470,7 @@ export default function StandupPageClient({
     dependencies: "",
     notes: "",
   });
+  const [todayTasks, setTodayTasks] = useState<StandupPlanTask[]>([]);
   const [selectedIssues, setSelectedIssues] = useState<StandupIssue[]>([]);
   const [issueQuery, setIssueQuery] = useState("");
   const [issueOptions, setIssueOptions] = useState<StandupIssue[]>([]);
@@ -627,12 +646,19 @@ export default function StandupPageClient({
       setEntryError("");
 
       try {
-        const entry = await getMyStandupEntryForDate(
+        const entryResponse = await getMyStandupEntryForDate(
           projectId,
           mySelectedDate,
           targetUserId
         );
+        const entry =
+          entryResponse && "id" in entryResponse ? entryResponse : null;
+        const loadedTasks = entryResponse?.todayTasks ?? [];
+
         setCurrentEntry(entry);
+        setTodayTasks(
+          loadedTasks.length > 0 ? loadedTasks : [createEmptyTask()]
+        );
         setFormState({
           summaryToday: entry?.summaryToday ?? "",
           progressSinceYesterday: entry?.progressSinceYesterday ?? "",
@@ -1089,6 +1115,8 @@ export default function StandupPageClient({
 
   const handleDraftReady = useCallback(
     (draft: { yesterday: string; today: string; blockers: string }) => {
+      const parsedTasks = parseLegacySummaryToday(draft.today ?? "", mySelectedDate);
+      setTodayTasks(parsedTasks.length > 0 ? parsedTasks : [createEmptyTask()]);
       setFormState((prev) => ({
         ...prev,
         progressSinceYesterday: draft.yesterday ?? "",
@@ -1098,13 +1126,13 @@ export default function StandupPageClient({
       setStandupMode("manual");
       addToast({ type: "success", message: "AI draft added to your standup." });
     },
-    [addToast]
+    [addToast, mySelectedDate]
   );
 
   const computedCompletion = useMemo(() => {
     const hasLinkedWork = selectedIssues.length + selectedResearch.length > 0;
-    return Boolean(formState.summaryToday.trim()) && hasLinkedWork;
-  }, [formState.summaryToday, selectedIssues.length, selectedResearch.length]);
+    return hasPlanContent(todayTasks, formState.summaryToday) && hasLinkedWork;
+  }, [formState.summaryToday, selectedIssues.length, selectedResearch.length, todayTasks]);
 
   const handleSaveEntry = async () => {
     if (!projectId || !mySelectedDate) return;
@@ -1121,10 +1149,15 @@ export default function StandupPageClient({
 
     try {
       const targetUserId = canProxyStandup ? actingUserId : currentUserId;
+      const normalizedTasks = todayTasks
+        .map((task, index) => ({ ...task, text: task.text.trim(), sortOrder: index }))
+        .filter((task) => task.text);
+
       const payload = {
         date: mySelectedDate,
         userId: targetUserId !== currentUserId ? targetUserId : undefined,
         summaryToday: formState.summaryToday.trim() || null,
+        todayTasks: normalizedTasks,
         progressSinceYesterday: formState.progressSinceYesterday.trim() || null,
         blockers: formState.blockers.trim() || null,
         dependencies: formState.dependencies.trim() || null,
@@ -1135,6 +1168,9 @@ export default function StandupPageClient({
 
       const saved = await upsertMyStandupEntry(projectId, payload);
       setCurrentEntry(saved);
+      setTodayTasks(
+        saved.todayTasks?.length ? saved.todayTasks : [createEmptyTask()]
+      );
       setSelectedIssues(saved.issues.map((link) => link.issue));
       setSelectedResearch(saved.research.map((link) => link.researchItem));
       addToast({ type: "success", message: "Standup entry saved." });
@@ -1541,21 +1577,13 @@ export default function StandupPageClient({
                   </div>
 
                   <div className="h-full flex flex-col">
-                    <label className="text-sm font-semibold text-slate-900 dark:text-slate-50">
-                      Today's plan
-                    </label>
-                    <textarea
-                      value={formState.summaryToday}
-                      onChange={(event) =>
-                        setFormState((prev) => ({
-                          ...prev,
-                          summaryToday: event.target.value,
-                        }))
-                      }
-                      placeholder="Today I'll..."
-                      rows={4}
-                      className="mt-2 flex-1 min-h-[140px] h-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-50"
-                    />
+                    <div className="mt-2 flex-1 min-h-[140px]">
+                      <StandupTaskEditor
+                        tasks={todayTasks}
+                        referenceDate={mySelectedDate}
+                        onChange={setTodayTasks}
+                      />
+                    </div>
                     <p
                       className={`mt-2 min-h-[16px] text-xs ${
                         !computedCompletion
@@ -1756,6 +1784,7 @@ export default function StandupPageClient({
                         dependencies: "",
                         notes: "",
                       });
+                      setTodayTasks([createEmptyTask()]);
                       setSelectedIssues([]);
                       setSelectedResearch([]);
                     }}
@@ -2061,15 +2090,20 @@ export default function StandupPageClient({
                                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                                   Today
                                 </p>
-                                <p
-                                  className={`mt-1 whitespace-pre-line rounded-md border p-3 leading-relaxed ${
+                                <StandupTaskDisplay
+                                  tasks={entry.displayTasks ?? entry.todayTasks}
+                                  summaryToday={entry.summaryToday}
+                                  entryDate={entry.date}
+                                  referenceDate={
+                                    isTodaySection
+                                      ? standupDateInput
+                                      : toDateInput(yesterdayDate)
+                                  }
+                                  highlightMissing={
                                     highlightMissing && todayMissingSections.today
-                                      ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-600/60 dark:bg-amber-950/40 dark:text-amber-100"
-                                      : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
-                                  }`}
-                                >
-                                  {entry.summaryToday ?? "—"}
-                                </p>
+                                  }
+                                  variant="presentation"
+                                />
                               </div>
                             </div>
 

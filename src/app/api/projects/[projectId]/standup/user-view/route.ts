@@ -8,6 +8,11 @@ import {
   PROJECT_ADMIN_ROLES,
 } from "@/lib/permissions";
 import { resolveProjectId, type ProjectParams } from "@/lib/params";
+import { getPreviousStandupEntries, toDateInputValue } from "@/lib/standupTaskQueries";
+import {
+  mergeOpenTasksForDate,
+  parseStoredTodayTasks,
+} from "@/lib/standupTasks";
 import { getPreviousStandupDate, parseDateOnly } from "@/lib/standupWindow";
 
 const standupInclude = {
@@ -74,7 +79,7 @@ export async function GET(
     settings?.standupWeekendDisabled ?? false
   );
 
-  const [todayEntries, yesterdayEntries] = await Promise.all([
+  const [todayEntries, yesterdayEntries, previousEntries] = await Promise.all([
     prisma.dailyStandupEntry.findMany({
       where: { projectId, userId: targetUserId, date: todayDate },
       include: standupInclude,
@@ -85,7 +90,23 @@ export async function GET(
       include: standupInclude,
       orderBy: { updatedAt: "desc" },
     }),
+    getPreviousStandupEntries(projectId, targetUserId, todayDate),
   ]);
+
+  const enrichEntry = (
+    entry: (typeof todayEntries)[number],
+    includeCarryOver: boolean
+  ) => {
+    const entryDateKey = toDateInputValue(entry.date);
+    const displayTasks = includeCarryOver
+      ? mergeOpenTasksForDate(previousEntries, entry, todayDate)
+      : parseStoredTodayTasks(entry.todayTasks, entry.summaryToday, entryDateKey);
+
+    return {
+      ...entry,
+      displayTasks,
+    };
+  };
 
   return NextResponse.json({
     user: {
@@ -93,8 +114,8 @@ export async function GET(
       name: membership.user.name,
       avatarUrl: membership.user.avatarUrl,
     },
-    today: todayEntries,
-    yesterday: yesterdayEntries,
+    today: todayEntries.map((entry) => enrichEntry(entry, true)),
+    yesterday: yesterdayEntries.map((entry) => enrichEntry(entry, false)),
     yesterdayDate: yesterdayDate.toISOString(),
   });
 }

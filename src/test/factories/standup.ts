@@ -85,6 +85,7 @@ export const buildStandupEntry = (
   userId: overrides.userId ?? nextId("user"),
   date: overrides.date ?? new Date("2024-01-01"),
   summaryToday: overrides.summaryToday ?? null,
+  todayTasks: overrides.todayTasks ?? null,
   progressSinceYesterday: overrides.progressSinceYesterday ?? null,
   blockers: overrides.blockers ?? null,
   dependencies: overrides.dependencies ?? null,
