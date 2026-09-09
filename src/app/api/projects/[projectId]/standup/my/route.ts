@@ -479,11 +479,6 @@ const upsertEntry = async (
     return NextResponse.json({ message: "Unable to load saved entry" }, { status: 500 });
   }
 
-  const settings = await prisma.projectSettings.findUnique({
-    where: { projectId },
-    select: { standupWeekendDisabled: true },
-  });
-
   const [previousEntries, previousDayEntry] = await Promise.all([
     getPreviousStandupEntries(projectId, targetUserId, date),
     getPreviousStandupDayEntry(
