@@ -1,5 +1,10 @@
 import prisma from "@/lib/db";
-import { getPreviousStandupDate, parseDateOnly } from "@/lib/standupWindow";
+import {
+  getPreviousStandupDate,
+  toDateInputValue,
+} from "@/lib/standupWindow";
+
+export { toDateInputValue };
 
 const MAX_LOOKBACK_DAYS = 30;
 
@@ -54,12 +59,3 @@ export const getPreviousStandupDayEntry = async (
   });
 };
 
-export const toDateInputValue = (value: Date | string | null | undefined) => {
-  const parsed = parseDateOnly(value ?? null);
-  if (!parsed) return "";
-
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, "0");
-  const day = String(parsed.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-};

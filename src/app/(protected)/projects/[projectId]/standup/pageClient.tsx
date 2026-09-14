@@ -21,7 +21,11 @@ import {
   syncTodayTasksWithYesterday,
   type StandupPlanTask,
 } from "@/lib/standupTasks";
-import { getPreviousStandupDate } from "@/lib/standupWindow";
+import {
+  getPreviousStandupDate,
+  parseDateOnly,
+  toDateInputValue,
+} from "@/lib/standupWindow";
 
 type StandupIssue = {
   id: string;
@@ -119,7 +123,7 @@ type ToastMessage = {
 
 type StandupEntryStatus = "missing" | "partial" | "updated";
 
-const toDateInput = (date: Date) => date.toISOString().split("T")[0];
+const toDateInput = (date: Date | string) => toDateInputValue(date);
 
 const formatDisplayDate = (value: string) =>
   new Date(value).toLocaleDateString(undefined, {
@@ -525,7 +529,8 @@ export default function StandupPageClient({
   );
   const yesterdayDate = useMemo(() => {
     if (standupViewData?.yesterdayDate) {
-      return new Date(standupViewData.yesterdayDate);
+      const parsed = parseDateOnly(standupViewData.yesterdayDate.slice(0, 10));
+      if (parsed) return parsed;
     }
     return fallbackYesterdayDate;
   }, [fallbackYesterdayDate, standupViewData?.yesterdayDate]);
@@ -1959,9 +1964,8 @@ export default function StandupPageClient({
                 onChange={(event) => {
                   const value = event.target.value;
                   if (!value) return;
-                  const parsed = new Date(value);
-                  if (Number.isNaN(parsed.getTime())) return;
-                  parsed.setHours(0, 0, 0, 0);
+                  const parsed = parseDateOnly(value);
+                  if (!parsed) return;
                   setSelectedDate(parsed);
                 }}
                 className="h-8 w-[9.5rem] rounded-md border border-slate-200 bg-white px-2 text-[12px] text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
@@ -2132,46 +2136,77 @@ export default function StandupPageClient({
             </div>
           )}
 
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_minmax(0,1fr)] items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <button
-              type="button"
-              disabled={!adjacentQueueMembers.previous}
-              onClick={() => moveQueueSelection(-1)}
-              className="min-w-0 truncate text-right text-[13px] text-slate-500 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 dark:text-slate-400 dark:hover:text-slate-100"
-              title={adjacentQueueMembers.previous?.user.name ?? undefined}
-            >
-              {adjacentQueueMembers.previous?.user.name ??
-                adjacentQueueMembers.previous?.user.email ??
-                "—"}
-            </button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!adjacentQueueMembers.previous}
-              onClick={() => moveQueueSelection(-1)}
-            >
-              Prev
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={!adjacentQueueMembers.next}
-              onClick={() => moveQueueSelection(1)}
-            >
-              Next
-            </Button>
-            <button
-              type="button"
-              disabled={!adjacentQueueMembers.next}
-              onClick={() => moveQueueSelection(1)}
-              className="min-w-0 truncate text-left text-[13px] font-medium text-slate-700 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 dark:text-slate-200 dark:hover:text-slate-50"
-              title={adjacentQueueMembers.next?.user.name ?? undefined}
-            >
-              {adjacentQueueMembers.next?.user.name ??
-                adjacentQueueMembers.next?.user.email ??
-                "End of queue"}
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">
+                {selectedMember?.user.avatarUrl ? (
+                  <img
+                    src={selectedMember.user.avatarUrl}
+                    alt={selectedMember.user.name ?? "Selected member"}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  getInitials(
+                    selectedMember?.user.name ??
+                      selectedMember?.user.email ??
+                      standupViewData?.user.name
+                  ) || "?"
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-400">
+                  Standup
+                </p>
+                <p className="truncate text-lg font-semibold text-slate-900 dark:text-slate-50">
+                  {standupViewData?.user.name ??
+                    selectedMember?.user.name ??
+                    selectedMember?.user.email ??
+                    "Select a teammate"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+              <button
+                type="button"
+                disabled={!adjacentQueueMembers.previous}
+                onClick={() => moveQueueSelection(-1)}
+                className="hidden min-w-0 max-w-[9rem] truncate text-right text-[13px] text-slate-500 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 sm:inline dark:text-slate-400 dark:hover:text-slate-100"
+                title={adjacentQueueMembers.previous?.user.name ?? undefined}
+              >
+                {adjacentQueueMembers.previous?.user.name ??
+                  adjacentQueueMembers.previous?.user.email ??
+                  "—"}
+              </button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={!adjacentQueueMembers.previous}
+                onClick={() => moveQueueSelection(-1)}
+              >
+                Prev
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!adjacentQueueMembers.next}
+                onClick={() => moveQueueSelection(1)}
+              >
+                Next
+              </Button>
+              <button
+                type="button"
+                disabled={!adjacentQueueMembers.next}
+                onClick={() => moveQueueSelection(1)}
+                className="hidden min-w-0 max-w-[9rem] truncate text-left text-[13px] font-medium text-slate-600 hover:text-slate-900 disabled:cursor-default disabled:opacity-40 sm:inline dark:text-slate-300 dark:hover:text-slate-50"
+                title={adjacentQueueMembers.next?.user.name ?? undefined}
+              >
+                {adjacentQueueMembers.next?.user.name ??
+                  adjacentQueueMembers.next?.user.email ??
+                  "End of queue"}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-4">
